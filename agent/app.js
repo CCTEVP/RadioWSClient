@@ -1,0 +1,207 @@
+let ws = null;
+let localWs = null;
+const statusEl = document.getElementById("status");
+const connectBtn = document.getElementById("connectBtn");
+const disconnectBtn = document.getElementById("disconnectBtn");
+const logsEl = document.getElementById("logs");
+
+// WebSocket connection URLs
+const WS_URL = "wss://radiowsserver-763503917257.europe-west1.run.app/";
+const LOCAL_WS_URL = "ws://localhost:2326";
+
+// Payload to send to local WebSocket
+const RADIO_CONTENT_PAYLOAD = {
+  rc: {
+    version: "1",
+    id: "1",
+    action: "play_now",
+    name: "RadioContent",
+    "max-duration": "10",
+  },
+};
+
+function connect() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    log("Already connected to remote server!", "info");
+    return;
+  }
+
+  updateStatus("connecting", "Connecting to remote server...");
+  log(`Connecting to ${WS_URL}...`, "info");
+
+  try {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = function (event) {
+      log("Connected to remote WebSocket server", "info");
+      updateStatus("connected", "Connected to remote server");
+      updateButtons(true);
+    };
+
+    ws.onmessage = function (event) {
+      try {
+        // Try to parse as JSON
+        const data = JSON.parse(event.data);
+        log(
+          `Received from remote: ${JSON.stringify(data, null, 2)}`,
+          "received"
+        );
+
+        // When we receive any payload, connect to local WebSocket and send the radio content payload
+        handleIncomingPayload(data);
+      } catch (e) {
+        // If not JSON, log as plain text and still trigger local connection
+        log(`Received from remote: ${event.data}`, "received");
+        handleIncomingPayload(event.data);
+      }
+    };
+
+    ws.onclose = function (event) {
+      const reason = event.wasClean
+        ? "Remote connection closed cleanly"
+        : "Remote connection lost";
+      log(
+        `${reason} (Code: ${event.code}, Reason: ${
+          event.reason || "No reason provided"
+        })`,
+        "info"
+      );
+      updateStatus("disconnected", "Disconnected from remote server");
+      updateButtons(false);
+    };
+
+    ws.onerror = function (error) {
+      log(`Remote WebSocket error occurred`, "error");
+      console.error("Remote WebSocket error:", error);
+    };
+  } catch (error) {
+    log(`Failed to connect to remote server: ${error.message}`, "error");
+    updateStatus("disconnected", "Remote connection failed");
+    updateButtons(false);
+  }
+}
+
+function handleIncomingPayload(payload) {
+  log("New payload detected - connecting to local WebSocket...", "info");
+
+  // Connect to local WebSocket and send the radio content payload
+  connectToLocalWebSocket();
+}
+
+function connectToLocalWebSocket() {
+  if (localWs && localWs.readyState === WebSocket.OPEN) {
+    // If already connected, just send the payload
+    sendRadioContentPayload();
+    return;
+  }
+
+  log(`Connecting to local WebSocket at ${LOCAL_WS_URL}...`, "info");
+
+  try {
+    localWs = new WebSocket(LOCAL_WS_URL);
+
+    localWs.onopen = function (event) {
+      log("Connected to local WebSocket server", "info");
+      // Send the radio content payload immediately upon connection
+      sendRadioContentPayload();
+    };
+
+    localWs.onmessage = function (event) {
+      try {
+        const data = JSON.parse(event.data);
+        log(
+          `Received from local: ${JSON.stringify(data, null, 2)}`,
+          "local-received"
+        );
+      } catch (e) {
+        log(`Received from local: ${event.data}`, "local-received");
+      }
+    };
+
+    localWs.onclose = function (event) {
+      const reason = event.wasClean
+        ? "Local connection closed cleanly"
+        : "Local connection lost";
+      log(
+        `${reason} (Code: ${event.code}, Reason: ${
+          event.reason || "No reason provided"
+        })`,
+        "info"
+      );
+    };
+
+    localWs.onerror = function (error) {
+      log(`Local WebSocket error occurred`, "error");
+      console.error("Local WebSocket error:", error);
+    };
+  } catch (error) {
+    log(`Failed to connect to local server: ${error.message}`, "error");
+  }
+}
+
+function sendRadioContentPayload() {
+  if (!localWs || localWs.readyState !== WebSocket.OPEN) {
+    log("Local WebSocket not connected - cannot send payload", "error");
+    return;
+  }
+
+  try {
+    const payloadString = JSON.stringify(RADIO_CONTENT_PAYLOAD);
+    localWs.send(payloadString);
+    log(
+      `Sent to local WebSocket: ${JSON.stringify(
+        RADIO_CONTENT_PAYLOAD,
+        null,
+        2
+      )}`,
+      "sent"
+    );
+  } catch (error) {
+    log(`Failed to send payload to local WebSocket: ${error.message}`, "error");
+  }
+}
+
+function disconnect() {
+  if (ws) {
+    ws.close(1000, "User initiated disconnect");
+    ws = null;
+  }
+
+  if (localWs) {
+    localWs.close(1000, "User initiated disconnect");
+    localWs = null;
+  }
+}
+
+function updateStatus(status, text) {
+  statusEl.className = `status ${status}`;
+  statusEl.textContent = text;
+}
+
+function updateButtons(connected) {
+  connectBtn.disabled = connected;
+  disconnectBtn.disabled = !connected;
+}
+
+function log(message, type = "info") {
+  const logEntry = document.createElement("div");
+  logEntry.className = `log-entry ${type}`;
+
+  const timestamp = new Date().toLocaleTimeString();
+  logEntry.innerHTML = `
+        <span class="timestamp">[${timestamp}]</span> ${message}
+    `;
+
+  logsEl.appendChild(logEntry);
+  logsEl.scrollTop = logsEl.scrollHeight;
+}
+
+function clearLogs() {
+  logsEl.innerHTML = "";
+}
+
+// Auto-connect on page load
+window.addEventListener("load", function () {
+  log("Agent starting - auto-connecting to remote server...", "info");
+  connect();
+});
