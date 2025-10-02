@@ -57,37 +57,38 @@ h1 {
   border: 1px solid #f5c6cb;
 }
 
+/* (Desktop / default) Control buttons */
 .controls {
-  text-align: center;
-  margin-bottom: 30px;
+  display: flex;
+  gap: 20px;
+  align-items: stretch;
+  justify-content: stretch;
+  margin: 0 0 30px 0;
+  width: 100%;
 }
-
 .controls button {
   background-color: #3498db;
   color: white;
   border: none;
   padding: 12px 24px;
-  margin: 0 10px;
+  margin: 0; /* spacing via gap */
   border-radius: 6px;
   cursor: pointer;
   font-size: 1em;
   font-weight: 500;
   transition: background-color 0.3s;
+  flex: 1 1 0; /* equal width buttons */
 }
-
 .controls button:hover:not(:disabled) {
   background-color: #2980b9;
 }
-
 .controls button:disabled {
   background-color: #bdc3c7;
   cursor: not-allowed;
 }
-
 .controls .clear-logs {
   background-color: #95a5a6;
 }
-
 .controls .clear-logs:hover {
   background-color: #7f8c8d;
 }
@@ -179,8 +180,12 @@ h1 {
 
 /* Responsive design */
 @media (max-width: 768px) {
+  .controls {
+    flex-direction: column;
+    gap: 10px;
+  }
   .container {
-    padding: 20px;
+    padding: 10px;
     margin: 10px;
   }
 
@@ -189,12 +194,173 @@ h1 {
   }
 
   .controls button {
-    display: block;
     width: 100%;
-    margin: 5px 0;
   }
 
   .logs {
     height: 300px;
+  }
+}
+
+/* Ultra-compact mode: target very small embedded area like 500x100 */
+@media (max-width: 520px), (max-height: 140px) {
+  body {
+    padding: 0px;
+  }
+  .container {
+    padding: 8px;
+    margin: 0;
+    box-shadow: none;
+    border-radius: 4px;
+  }
+  h1 {
+    font-size: 0.9rem;
+    margin: 0 0 4px 0;
+    line-height: 1.1;
+    text-align: left;
+  }
+  .description,
+  .payload-info h3 {
+    display: none;
+  }
+  .payload-info {
+    padding: 4px 6px;
+    margin-bottom: 4px;
+  }
+  #payloadDisplay {
+    font-size: 0.6rem;
+    padding: 4px;
+    max-height: 40px;
+    line-height: 1.1;
+  }
+  .status {
+    font-size: 0.65rem;
+    padding: 4px 6px;
+    margin: 4px 0;
+  }
+  .controls {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    margin: 2px 0 4px;
+  }
+  .controls button {
+    margin: 0;
+    padding: 4px 6px;
+    font-size: 0.65rem;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+  .controls button .icon-label {
+    display: none;
+  }
+  .controls button .full-label {
+    display: inline;
+  }
+  .message-section h3 {
+    font-size: 0.7rem;
+    margin: 2px 0;
+  }
+  .logs {
+    height: 52px;
+    padding: 4px 6px;
+    font-size: 0.55rem;
+    line-height: 1.05;
+  }
+  .log-entry {
+    margin-bottom: 2px;
+    padding: 2px 3px;
+  }
+}
+
+/* Even tighter when both width and height constrained (simulate 500x100 specifically) */
+@media (max-width: 520px) and (max-height: 120px) {
+  /* Minimized mode: icons only, buttons left column, logs right column */
+  h1,
+  .description {
+    display: none;
+  }
+  .payload-info,
+  #payloadDisplay {
+    display: none;
+  }
+  html,
+  body {
+    height: 100%;
+    overflow: hidden; /* remove page scrollbar in minimized mode */
+  }
+  .container {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 2px;
+    padding: 2px; /* equal vertical padding */
+    height: 100%;
+    box-sizing: border-box;
+    overflow: hidden; /* only logs scroll */
+  }
+  .status {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 0.52rem;
+    padding: 2px 3px;
+    line-height: 1.1;
+  }
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    align-self: stretch;
+    height: 100%;
+  }
+  .controls button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0; /* fixed to avoid hover size shift */
+    margin: 0;
+    font-size: 0.5rem;
+    flex: 1 1 0;
+    min-height: 0;
+    line-height: 1;
+    box-sizing: border-box;
+  }
+  .controls button:hover,
+  .controls button:active,
+  .controls button:focus {
+    padding: 0;
+  }
+  .controls button .full-label {
+    display: none;
+  }
+  .controls button .icon-label {
+    display: inline;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .message-section {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0; /* allow flex child to shrink */
+  }
+  .message-section h3 {
+    display: none;
+  }
+  .logs {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 2px 4px;
+    font-size: 0.5rem;
+    line-height: 1;
+    overflow-y: auto;
+  }
+  .log-entry {
+    margin-bottom: 1px;
+    padding: 1px 2px;
   }
 }

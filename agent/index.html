@@ -17,27 +17,47 @@
 
       <div id="status" class="status disconnected">Disconnected</div>
 
-      <div class="controls">
-        <button id="connectBtn" onclick="connect()">Connect to Remote</button>
-        <button id="disconnectBtn" onclick="disconnect()" disabled>
-          Disconnect
+      <div class="controls" aria-label="Connection Controls">
+        <button
+          id="connectBtn"
+          aria-label="Connect to Remote"
+          onclick="connect()"
+        >
+          <span class="full-label">Connect</span>
+          <span class="icon-label" aria-hidden="true">🔌</span>
         </button>
-        <button class="clear-logs" onclick="clearLogs()">Clear Logs</button>
+        <button
+          id="disconnectBtn"
+          aria-label="Disconnect"
+          onclick="disconnect()"
+          disabled
+        >
+          <span class="full-label">Disconnect</span>
+          <span class="icon-label" aria-hidden="true">⛔</span>
+        </button>
+        <button
+          class="clear-logs"
+          aria-label="Clear Logs"
+          onclick="clearLogs()"
+        >
+          <span class="full-label">Clear</span>
+          <span class="icon-label" aria-hidden="true">🧹</span>
+        </button>
       </div>
 
       <div class="payload-info">
         <h3>Payload sent to local WebSocket (port 2326):</h3>
         <pre id="payloadDisplay">
-{
-  "rc": {
-    "version": "1",
-    "id": "1",
-    "action": "play_now",
-    "name": "RadioContent",
-    "max-duration": "10"
-  }
-}</pre
-        >
+        {
+          "rc": {
+            "version": "1",
+            "id": "1",
+            "action": "play_now",
+            "name": "RadioContent",
+            "max-duration": "10"
+          }
+        }
+        </pre>
       </div>
 
       <div class="message-section">
