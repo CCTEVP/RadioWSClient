@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WS Squares Client</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Fullscreen dark background just for demo; replace/remove to overlay on real player content -->
+    <div class="demo-bg" aria-hidden="true"></div>
+
+    <!-- Overlay with 10 squares (1..10) -->
+    <div
+      id="squareOverlay"
+      class="square-overlay"
+      aria-label="Advertiser activity squares"
+    >
+      <div class="squares" id="squares" role="list" aria-live="polite">
+        <div
+          class="square"
+          data-id="1"
+          role="listitem"
+          aria-label="Advertiser 1"
+        ></div>
+        <div
+          class="square"
+          data-id="2"
+          role="listitem"
+          aria-label="Advertiser 2"
+        ></div>
+        <div
+          class="square"
+          data-id="3"
+          role="listitem"
+          aria-label="Advertiser 3"
+        ></div>
+        <div
+          class="square"
+          data-id="4"
+          role="listitem"
+          aria-label="Advertiser 4"
+        ></div>
+        <div
+          class="square"
+          data-id="5"
+          role="listitem"
+          aria-label="Advertiser 5"
+        ></div>
+        <div
+          class="square"
+          data-id="6"
+          role="listitem"
+          aria-label="Advertiser 6"
+        ></div>
+        <div
+          class="square"
+          data-id="7"
+          role="listitem"
+          aria-label="Advertiser 7"
+        ></div>
+        <div
+          class="square"
+          data-id="8"
+          role="listitem"
+          aria-label="Advertiser 8"
+        ></div>
+        <div
+          class="square"
+          data-id="9"
+          role="listitem"
+          aria-label="Advertiser 9"
+        ></div>
+        <div
+          class="square"
+          data-id="10"
+          role="listitem"
+          aria-label="Advertiser 10"
+        ></div>
+      </div>
+    </div>
+
+    <!-- WebSocket status dot (hidden after successful connection) -->
+    <div
+      id="wsDot"
+      class="ws-dot"
+      aria-label="WebSocket connection indicator"
+    ></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

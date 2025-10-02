@@ -1,0 +1,73 @@
+/* Overlay container positioned top-right */
+.square-overlay {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 9999;
+  pointer-events: none; /* Click-through; remove if interaction needed */
+  font-family: Arial, sans-serif;
+}
+
+.squares {
+  display: flex;
+  gap: 4px; /* minimal space between squares */
+}
+
+.square {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 2px;
+  transition: background 0.25s, transform 0.25s, box-shadow 0.25s;
+}
+
+.square.active {
+  background: #1e90ff; /* DodgerBlue */
+  box-shadow: 0 0 6px rgba(30, 144, 255, 0.9);
+}
+
+/* Optional pulse effect when newly activated */
+.square.pulse {
+  animation: pulse 0.8s ease-out;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Demo dark background (remove in production) */
+.demo-bg {
+  position: fixed;
+  inset: 0;
+  background: #000; /* mimic player content */
+  z-index: -1;
+}
+
+/* Small red dot bottom-left (initially visible until WS connects) */
+.ws-dot {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  width: 14px;
+  height: 14px;
+  background: #ff2d2d;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(255, 45, 45, 0.8);
+  z-index: 9999;
+  transition: opacity 0.3s ease;
+}
+
+.ws-dot.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
