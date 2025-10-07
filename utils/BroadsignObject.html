@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BroadSignObject Inspector</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #f4f4f4;
+        margin: 0;
+        padding: 2rem;
+      }
+      .container {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        max-width: 600px;
+        margin: 2rem auto;
+        padding: 2rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 0.5rem 1rem;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+      }
+      th {
+        background: #f0f0f0;
+      }
+      .not-found {
+        color: #b00;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>BroadSignObject Inspector</h1>
+      <div id="output"></div>
+    </div>
+    <script>
+      function renderBroadSignObject() {
+        const output = document.getElementById("output");
+        if (
+          typeof window.BroadSignObject === "object" &&
+          window.BroadSignObject !== null
+        ) {
+          const entries = Object.entries(window.BroadSignObject);
+          if (entries.length === 0) {
+            output.innerHTML =
+              "<p>No properties found in <strong>BroadSignObject</strong>.</p>";
+            return;
+          }
+          let html =
+            "<table><thead><tr><th>Property</th><th>Value</th></tr></thead><tbody>";
+          for (const [name, value] of entries) {
+            html += `<tr><td>
+						${name}
+					</td><td><pre style="margin:0;white-space:pre-wrap;word-break:break-all;">${JSON.stringify(
+            value,
+            null,
+            2
+          )}</pre></td></tr>`;
+          }
+          html += "</tbody></table>";
+          output.innerHTML = html;
+        } else {
+          output.innerHTML =
+            '<p class="not-found">BroadSignObject not found on window.</p>';
+        }
+      }
+      // Run on load
+      renderBroadSignObject();
+    </script>
+  </body>
+</html>

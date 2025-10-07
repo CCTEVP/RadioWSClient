@@ -1,3 +1,45 @@
+let localWs = null;
+let localWsReady = false;
+let dynamicFrameId = "12343"; // default
+let adCopyId = "1290113894"; // default
+// Try to set from BroadSignObject immediately if available
+const frameIdInit = getBroadSignProperty("frame_id");
+if (typeof frameIdInit === "string" && frameIdInit !== "") {
+  dynamicFrameId = frameIdInit;
+  console.log("[INIT] BroadSignObject.frame_id found:", dynamicFrameId);
+} else {
+  console.log("[INIT] BroadSignObject present but frame_id missing or invalid");
+}
+
+const adCopyIdInit = getBroadSignProperty("ad_copy_id");
+if (typeof adCopyIdInit === "string" && adCopyIdInit !== "") {
+  adCopyId = adCopyIdInit;
+  console.log("[INIT] BroadSignObject.ad_copy_id found:", adCopyId);
+} else {
+  console.log(
+    "[INIT] BroadSignObject present but ad_copy_id missing or invalid"
+  );
+}
+
+function hideBlueDot() {
+  const dot = document.getElementById("customPopDot");
+  if (dot) dot.style.opacity = "0";
+}
+
+function showBlueDot() {
+  const dot = document.getElementById("customPopDot");
+  if (dot) dot.style.opacity = "1";
+}
+
+function hideRedDot() {
+  const dot = document.getElementById("wsDot");
+  if (dot) dot.style.opacity = "0";
+}
+
+function showRedDot() {
+  const dot = document.getElementById("wsDot");
+  if (dot) dot.style.opacity = "1";
+}
 // Simple WebSocket squares highlighter
 // Maps incoming payload advertiser.id to a square (1..10)
 
@@ -11,6 +53,8 @@ const RECONNECT_DELAY = 3000; // ms
 const HEARTBEAT_INTERVAL = 30000; // 30 seconds
 const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
 let reconnectAttempts = 0;
+const ENABLE_PUBLIC_IP_LOOKUP = true; // Set false to disable external IP fetch
+const PUBLIC_IP_ENDPOINT = "https://api.ipify.org?format=json";
 
 const squaresContainer = document.getElementById("squares");
 const squares = squaresContainer
@@ -32,14 +76,18 @@ function connect() {
     ws.onopen = () => {
       clearTimeout(reconnectTimer);
       console.log("[WS] Connected");
-      if (wsDot) wsDot.classList.add("hidden");
+      hideRedDot();
 
       // Reset reconnection attempts on successful connection
       reconnectAttempts = 0;
       connectionStartTime = Date.now();
 
+      // Wait for response in onmessage
       // Start heartbeat
       startHeartbeat();
+
+      // Announce presence / broadcast metadata
+      announcePresence("player");
     };
 
     // Handle server ping frames (automatic pong response)
@@ -48,6 +96,7 @@ function connect() {
     });
 
     ws.onmessage = (evt) => {
+      // Wait for response in onmessage
       handleMessage(evt.data);
     };
 
@@ -59,6 +108,22 @@ function connect() {
       console.log("[WS] Closed - will attempt reconnect");
 
       // Stop heartbeat
+      localWs.onmessage = function (event) {
+        try {
+          const resp = JSON.parse(event.data);
+          if (
+            resp &&
+            resp.rc &&
+            resp.rc.action === "custom_pop" &&
+            resp.rc.status === "1"
+          ) {
+            hideBlueDot();
+            console.log("[LocalWS] CustomPOP success, blue dot hidden");
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      };
       stopHeartbeat();
 
       // Show connection time if it was established
@@ -69,7 +134,7 @@ function connect() {
         console.log(`[WS] Connection lasted ${connectionDuration} seconds`);
       }
 
-      if (wsDot) wsDot.classList.remove("hidden");
+      showRedDot();
 
       // Auto-reconnect if not manual disconnect and within attempt limit
       if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
@@ -82,6 +147,60 @@ function connect() {
     console.error("[WS] Connection exception", e);
     scheduleReconnect();
   }
+}
+
+function announcePresence(role) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const base = {
+    type: "announce",
+    timestamp: new Date().toISOString(),
+    clientId: role,
+    userAgent: navigator.userAgent,
+    screen: {
+      width: window.screen?.width || null,
+      height: window.screen?.height || null,
+    },
+    pageVisibility: document.visibilityState,
+    location: { href: location.href },
+  };
+
+  // If IP lookup disabled or fetch unsupported, send immediately.
+  if (!ENABLE_PUBLIC_IP_LOOKUP || !window.fetch) {
+    try {
+      ws.send(JSON.stringify(base));
+      console.log("[WS] Announce sent", base);
+    } catch (e) {
+      console.warn("[WS] Failed to send announce", e);
+    }
+    return;
+  }
+
+  // Try to enrich with IP (timeout so we don't stall indefinitely)
+  const timeoutMs = 1000;
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), timeoutMs);
+
+  fetch(PUBLIC_IP_ENDPOINT, { cache: "no-store", signal: controller.signal })
+    .then((r) =>
+      r.ok ? r.json() : Promise.reject(new Error("ip fetch status " + r.status))
+    )
+    .then((ipData) => {
+      base.ip = ipData.ip;
+    })
+    .catch(() => {
+      /* ignore errors / abort */
+    })
+    .finally(() => {
+      clearTimeout(to);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify(base));
+        console.log("[WS] Announce sent", base);
+      } catch (e) {
+        console.warn("[WS] Failed to send announce", e);
+      }
+    });
 }
 
 function scheduleReconnect() {
@@ -123,45 +242,162 @@ function handleMessage(raw) {
     // Extract the actual payload from the broadcast wrapper
     data = data.data;
   }
-
-  // Now handle the actual message content
-  // Server structure: broadcast.data contains the original client message
-  // Expected client message structure:
-  // {
-  //   "type": "ping",
-  //   "timestamp": "...",
-  //   "data": {
-  //       "content": {"id":6564, "name":"Florida"},
-  //       "advertiser": {"id":1, "name":"Mc Donalds"}
-  //   }
-  // }
-
-  const payload = data && data.data;
-  if (!payload) {
-    console.warn("[WS] Message missing data payload", data);
+  // Only process messages where the (unwrapped) type is 'post'
+  if (!data || data.type !== "post") {
+    // Silently ignore other types (could log if needed)
     return;
   }
 
-  // Look for advertiser info in the payload
+  // Expected structure now:
+  // {
+  //   "type": "post",
+  //   "timestamp": "...",
+  //   "data": { "advertiser": { "id": "1" | 1, ... }, ... }
+  // }
+  const payload = data.data;
+  if (!payload) {
+    console.warn("[WS] 'post' message missing data payload", data);
+    return;
+  }
+
+  // Locate advertiser object (direct or nested one level deep)
   let core = payload;
-  if (core && typeof core === "object" && !("advertiser" in core)) {
-    // Try to locate nested object with advertiser
+  if (core && typeof core === "object" && !core.advertiser) {
     for (const k in core) {
-      if (core[k] && typeof core[k] === "object" && "advertiser" in core[k]) {
+      if (core[k] && typeof core[k] === "object" && core[k].advertiser) {
         core = core[k];
         break;
       }
     }
   }
 
-  if (!core || !core.advertiser || typeof core.advertiser.id !== "number") {
-    console.warn("[WS] Payload missing advertiser.id", data);
+  if (!core || !core.advertiser || core.advertiser.id == null) {
+    console.warn("[WS] 'post' payload missing advertiser.id", data);
     return;
   }
 
-  const advertiserId = core.advertiser.id;
-  console.log(`[WS] Highlighting square for advertiser ID: ${advertiserId}`);
+  // Advertiser id may now be a string. Convert to integer.
+  let advertiserIdRaw = core.advertiser.id;
+  if (typeof advertiserIdRaw === "string")
+    advertiserIdRaw = advertiserIdRaw.trim();
+  const advertiserId = parseInt(advertiserIdRaw, 10);
+  if (!Number.isInteger(advertiserId)) {
+    console.warn("[WS] advertiser.id not a valid integer", core.advertiser.id);
+    return;
+  }
+
+  console.log(
+    `[WS] Highlighting square for advertiser ID (post): ${advertiserId}`
+  );
   highlightSquare(advertiserId);
+
+  // Update Now Playing display if content.name is available
+  if (payload.content && payload.content.name && payload.advertiser.name) {
+    updateNowPlaying(payload.content.name, payload.advertiser.name);
+  }
+
+  // After highlighting, open local ws://localhost:2326 and send the custom payload
+  sendCustomPOP();
+
+  // Utility function to safely retrieve a property from BroadSignObject
+  // Local WebSocket logic for sending custom payload after highlight
+
+  function sendCustomPOP() {
+    const LOCAL_WS_URL = "ws://localhost:2326";
+    const PAYLOAD = {
+      rc: {
+        version: "1",
+        id: "1",
+        action: "custom_pop",
+        frame_id: dynamicFrameId,
+        content_id: adCopyId,
+        external_value_1: "radio_content_activated",
+        custom_field: "<custom_json>",
+        name: "RADIO CONTENT",
+      },
+    };
+
+    // If already open, just send
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      try {
+        localWs.send(JSON.stringify(PAYLOAD));
+        console.log("[LocalWS] Sent Custom POP");
+      } catch (e) {
+        console.warn("[LocalWS] Failed to send Custom POP", e);
+      }
+      return;
+    }
+
+    // If not open, create and send on open
+    try {
+      localWs = new WebSocket(LOCAL_WS_URL);
+      localWs.onopen = function () {
+        try {
+          localWs.send(JSON.stringify(PAYLOAD));
+          console.log("[LocalWS] Sent custom payload (on open)");
+        } catch (e) {
+          console.warn("[LocalWS] Failed to send payload (on open)", e);
+        }
+      };
+      localWs.onerror = function (err) {
+        console.warn("[LocalWS] Error", err);
+      };
+      localWs.onclose = function () {
+        // Optionally, set localWs to null to allow reconnect on next trigger
+        localWs = null;
+      };
+    } catch (e) {
+      console.warn("[LocalWS] Exception opening local ws", e);
+    }
+  }
+}
+function getBroadSignProperty(propName) {
+  if (
+    typeof window.BroadSignObject === "object" &&
+    window.BroadSignObject !== null &&
+    Object.prototype.hasOwnProperty.call(window.BroadSignObject, propName)
+  ) {
+    const value = window.BroadSignObject[propName];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+    return value;
+  }
+  return undefined;
+}
+
+let nowPlayingTimeout = null;
+
+function updateNowPlaying(content, advertiser) {
+  const nowPlayingContentElement = document.getElementById("nowPlayingContent");
+  const nowPlayingAdvertiserElement = document.getElementById(
+    "nowPlayingAdvertiser"
+  );
+  const nowPlayingContainer = document.getElementById("nowPlayingContainer");
+  if (nowPlayingContentElement && content) {
+    nowPlayingContentElement.textContent = content;
+    nowPlayingAdvertiserElement.textContent = advertiser;
+    if (nowPlayingContainer) {
+      // Clear any existing timeout
+      if (nowPlayingTimeout) {
+        clearTimeout(nowPlayingTimeout);
+      }
+
+      // Show the container and remove fade-out class
+      nowPlayingContainer.style.display = "block";
+      nowPlayingContainer.classList.remove("fade-out");
+
+      // Schedule fade-out after 10 seconds
+      nowPlayingTimeout = setTimeout(() => {
+        nowPlayingContainer.classList.add("fade-out");
+        // Hide completely after transition completes (0.5s)
+        setTimeout(() => {
+          nowPlayingContainer.style.display = "none";
+        }, 500);
+      }, 10000);
+    }
+    console.log("[UI] Now Playing updated:", content, advertiser);
+  }
 }
 
 function highlightSquare(id) {

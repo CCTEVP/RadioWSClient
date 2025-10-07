@@ -16,6 +16,12 @@ body {
 h1 {
   color: #333;
   text-align: center;
+  line-height: 80%;
+}
+h2 {
+  color: #333;
+  text-align: center;
+  line-height: 80%;
 }
 
 .status {

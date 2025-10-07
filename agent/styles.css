@@ -203,7 +203,7 @@ h1 {
 }
 
 /* Ultra-compact mode: target very small embedded area like 500x100 */
-@media (max-width: 520px), (max-height: 140px) {
+@media (max-width: 800px), (max-height: 140px) {
   body {
     padding: 0px;
   }
@@ -275,7 +275,7 @@ h1 {
 }
 
 /* Even tighter when both width and height constrained (simulate 500x100 specifically) */
-@media (max-width: 520px) and (max-height: 120px) {
+@media (max-width: 800px) and (max-height: 120px) {
   /* Minimized mode: icons only, buttons left column, logs right column */
   h1,
   .description {

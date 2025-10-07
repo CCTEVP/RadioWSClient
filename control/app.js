@@ -18,6 +18,8 @@ const HEARTBEAT_INTERVAL = 30000; // 30 seconds
 const RECONNECT_DELAY = 3000; // 3 seconds
 const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
 let reconnectAttempts = 0;
+const ENABLE_PUBLIC_IP_LOOKUP = true; // toggle external IP fetch
+const PUBLIC_IP_ENDPOINT = "https://api.ipify.org?format=json";
 
 function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -42,6 +44,9 @@ function connect() {
 
       // Start heartbeat
       startHeartbeat();
+
+      // Announce presence metadata
+      announcePresence("control");
     };
 
     // Handle server ping frames (automatic pong response)
@@ -120,6 +125,57 @@ function connect() {
     updateStatus("disconnected", "Connection Failed");
     updateButtons(false);
   }
+}
+
+function announcePresence(role) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const base = {
+    type: "announce",
+    timestamp: new Date().toISOString(),
+    clientId: role,
+    userAgent: navigator.userAgent,
+    screen: {
+      width: window.screen?.width || null,
+      height: window.screen?.height || null,
+    },
+    pageVisibility: document.visibilityState,
+    location: { href: location.href },
+  };
+
+  if (!ENABLE_PUBLIC_IP_LOOKUP || !window.fetch) {
+    try {
+      ws.send(JSON.stringify(base));
+      log("Announce sent: " + JSON.stringify(base), "sent");
+    } catch (e) {
+      log("Failed to send announce: " + e.message, "error");
+    }
+    return;
+  }
+
+  const timeoutMs = 1000;
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), timeoutMs);
+  fetch(PUBLIC_IP_ENDPOINT, { cache: "no-store", signal: controller.signal })
+    .then((r) =>
+      r.ok ? r.json() : Promise.reject(new Error("ip fetch status " + r.status))
+    )
+    .then((ipData) => {
+      base.ip = ipData.ip;
+    })
+    .catch(() => {
+      /* ignore */
+    })
+    .finally(() => {
+      clearTimeout(to);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify(base));
+        log("Announce sent: " + JSON.stringify(base), "sent");
+      } catch (e) {
+        log("Failed to send announce: " + e.message, "error");
+      }
+    });
 }
 
 function disconnect() {

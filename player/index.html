@@ -12,6 +12,17 @@
       <img src="./img/BMO_Welcome_1080x1920.jpg" alt="Demo background" />
     </div>
 
+    <!-- Now Playing container -->
+    <div
+      id="nowPlayingContainer"
+      class="now-playing-container"
+      style="display: none"
+    >
+      <div class="now-playing-label">Now Playing:</div>
+      <div id="nowPlayingContent" class="now-playing-content"></div>
+      <div id="nowPlayingAdvertiser" class="now-playing-advertiser"></div>
+    </div>
+
     <!-- Overlay with 10 squares (1..10) -->
     <div
       id="squareOverlay"
@@ -83,12 +94,10 @@
     </div>
 
     <!-- WebSocket status dot (hidden after successful connection) -->
-    <div
-      id="wsDot"
-      class="ws-dot"
-      aria-label="WebSocket connection indicator"
-    ></div>
+    <div id="wsDot" aria-label="WebSocket connection indicator"></div>
 
+    <!-- Blue dot for CustomPOP status -->
+    <div id="customPopDot" aria-label="CustomPOP status indicator"></div>
     <script src="app.js"></script>
   </body>
 </html>

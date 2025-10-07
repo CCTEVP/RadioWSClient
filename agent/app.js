@@ -19,6 +19,8 @@ const RADIO_CONTENT_PAYLOAD = {
     "max-duration": "10",
   },
 };
+const ENABLE_PUBLIC_IP_LOOKUP = true;
+const PUBLIC_IP_ENDPOINT = "https://api.ipify.org?format=json";
 
 function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -36,23 +38,47 @@ function connect() {
       log("Connected to remote WebSocket server", "info");
       updateStatus("connected", "Connected to remote server");
       updateButtons(true);
+
+      // Announce presence to remote server
+      announcePresence("agent");
     };
 
     ws.onmessage = function (event) {
+      let data;
       try {
-        // Try to parse as JSON
-        const data = JSON.parse(event.data);
+        data = JSON.parse(event.data);
+      } catch (e) {
         log(
-          `Received from remote: ${JSON.stringify(data, null, 2)}`,
+          `Received non-JSON remote message ignored: ${event.data}`,
           "received"
         );
+        return; // Do not trigger local actions for non-JSON
+      }
 
-        // When we receive any payload, connect to local WebSocket and send the radio content payload
-        handleIncomingPayload(data);
-      } catch (e) {
-        // If not JSON, log as plain text and still trigger local connection
-        log(`Received from remote: ${event.data}`, "received");
-        handleIncomingPayload(event.data);
+      // Unwrap broadcast envelope if present
+      let inner = data;
+      if (
+        data &&
+        data.type === "broadcast" &&
+        data.data &&
+        typeof data.data === "object"
+      ) {
+        inner = data.data;
+      }
+
+      // Log the raw remote message
+      log(`Received from remote: ${JSON.stringify(data, null, 2)}`, "received");
+
+      // Only react when the (possibly unwrapped) message is a post
+      if (inner && inner.type === "post") {
+        log(
+          "Trigger: 'post' message received - ensuring local WebSocket communication",
+          "info"
+        );
+        handleIncomingPayload(inner);
+      } else {
+        // Optional: comment out if too noisy
+        // log(`Ignoring remote message type '${inner && inner.type}'`, 'info');
       }
     };
 
@@ -81,10 +107,61 @@ function connect() {
   }
 }
 
-function handleIncomingPayload(payload) {
-  log("New payload detected - connecting to local WebSocket...", "info");
+function announcePresence(role) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const base = {
+    type: "announce",
+    timestamp: new Date().toISOString(),
+    clientId: role,
+    userAgent: navigator.userAgent,
+    screen: {
+      width: window.screen?.width || null,
+      height: window.screen?.height || null,
+    },
+    location: { href: location.href },
+  };
 
-  // Connect to local WebSocket and send the radio content payload
+  if (!ENABLE_PUBLIC_IP_LOOKUP || !window.fetch) {
+    try {
+      ws.send(JSON.stringify(base));
+      log("Announce sent: " + JSON.stringify(base), "sent");
+    } catch (e) {
+      log("Failed to send announce: " + e.message, "error");
+    }
+    return;
+  }
+
+  const timeoutMs = 1000;
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), timeoutMs);
+  fetch(PUBLIC_IP_ENDPOINT, { cache: "no-store", signal: controller.signal })
+    .then((r) =>
+      r.ok ? r.json() : Promise.reject(new Error("ip fetch status " + r.status))
+    )
+    .then((ipData) => {
+      base.ip = ipData.ip;
+    })
+    .catch(() => {
+      /* ignore */
+    })
+    .finally(() => {
+      clearTimeout(to);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify(base));
+        log("Announce sent: " + JSON.stringify(base), "sent");
+      } catch (e) {
+        log("Failed to send announce: " + e.message, "error");
+      }
+    });
+}
+
+function handleIncomingPayload(postMessage) {
+  // postMessage is the unwrapped object with type 'post'.
+  log(
+    "Post message received - connecting to local WebSocket if needed...",
+    "info"
+  );
   connectToLocalWebSocket();
 }
 
