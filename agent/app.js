@@ -19,8 +19,6 @@ const RADIO_CONTENT_PAYLOAD = {
     "max-duration": "10",
   },
 };
-const ENABLE_PUBLIC_IP_LOOKUP = true;
-const PUBLIC_IP_ENDPOINT = "https://api.ipify.org?format=json";
 
 function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -109,7 +107,8 @@ function connect() {
 
 function announcePresence(role) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const base = {
+
+  const announcement = {
     type: "announce",
     timestamp: new Date().toISOString(),
     clientId: role,
@@ -121,39 +120,12 @@ function announcePresence(role) {
     location: { href: location.href },
   };
 
-  if (!ENABLE_PUBLIC_IP_LOOKUP || !window.fetch) {
-    try {
-      ws.send(JSON.stringify(base));
-      log("Announce sent: " + JSON.stringify(base), "sent");
-    } catch (e) {
-      log("Failed to send announce: " + e.message, "error");
-    }
-    return;
+  try {
+    ws.send(JSON.stringify(announcement));
+    log("Announce sent: " + JSON.stringify(announcement), "sent");
+  } catch (e) {
+    log("Failed to send announce: " + e.message, "error");
   }
-
-  const timeoutMs = 1000;
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), timeoutMs);
-  fetch(PUBLIC_IP_ENDPOINT, { cache: "no-store", signal: controller.signal })
-    .then((r) =>
-      r.ok ? r.json() : Promise.reject(new Error("ip fetch status " + r.status))
-    )
-    .then((ipData) => {
-      base.ip = ipData.ip;
-    })
-    .catch(() => {
-      /* ignore */
-    })
-    .finally(() => {
-      clearTimeout(to);
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      try {
-        ws.send(JSON.stringify(base));
-        log("Announce sent: " + JSON.stringify(base), "sent");
-      } catch (e) {
-        log("Failed to send announce: " + e.message, "error");
-      }
-    });
 }
 
 function handleIncomingPayload(postMessage) {

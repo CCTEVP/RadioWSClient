@@ -53,8 +53,6 @@ const RECONNECT_DELAY = 3000; // ms
 const HEARTBEAT_INTERVAL = 30000; // 30 seconds
 const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
 let reconnectAttempts = 0;
-const ENABLE_PUBLIC_IP_LOOKUP = true; // Set false to disable external IP fetch
-const PUBLIC_IP_ENDPOINT = "https://api.ipify.org?format=json";
 
 const squaresContainer = document.getElementById("squares");
 const squares = squaresContainer
@@ -152,7 +150,7 @@ function connect() {
 function announcePresence(role) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-  const base = {
+  const announcement = {
     type: "announce",
     timestamp: new Date().toISOString(),
     clientId: role,
@@ -165,42 +163,12 @@ function announcePresence(role) {
     location: { href: location.href },
   };
 
-  // If IP lookup disabled or fetch unsupported, send immediately.
-  if (!ENABLE_PUBLIC_IP_LOOKUP || !window.fetch) {
-    try {
-      ws.send(JSON.stringify(base));
-      console.log("[WS] Announce sent", base);
-    } catch (e) {
-      console.warn("[WS] Failed to send announce", e);
-    }
-    return;
+  try {
+    ws.send(JSON.stringify(announcement));
+    console.log("[WS] Announce sent", announcement);
+  } catch (e) {
+    console.warn("[WS] Failed to send announce", e);
   }
-
-  // Try to enrich with IP (timeout so we don't stall indefinitely)
-  const timeoutMs = 1000;
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), timeoutMs);
-
-  fetch(PUBLIC_IP_ENDPOINT, { cache: "no-store", signal: controller.signal })
-    .then((r) =>
-      r.ok ? r.json() : Promise.reject(new Error("ip fetch status " + r.status))
-    )
-    .then((ipData) => {
-      base.ip = ipData.ip;
-    })
-    .catch(() => {
-      /* ignore errors / abort */
-    })
-    .finally(() => {
-      clearTimeout(to);
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      try {
-        ws.send(JSON.stringify(base));
-        console.log("[WS] Announce sent", base);
-      } catch (e) {
-        console.warn("[WS] Failed to send announce", e);
-      }
-    });
 }
 
 function scheduleReconnect() {

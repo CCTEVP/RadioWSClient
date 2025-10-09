@@ -3,12 +3,7 @@ let heartbeatTimer = null;
 let reconnectTimer = null;
 let isManualDisconnect = false;
 let connectionStartTime = null;
-const statusEl = document.getElementById("status");
-const connectBtn = document.getElementById("connectBtn");
-const disconnectBtn = document.getElementById("disconnectBtn");
-const sendBtn = document.getElementById("sendBtn");
-const messageInput = document.getElementById("messageInput");
-const logsEl = document.getElementById("logs");
+let imageResetTimer = null;
 
 // WebSocket connection URL
 const WS_URL = "wss://radiowsserver-763503917257.europe-west1.run.app/";
@@ -19,37 +14,43 @@ const RECONNECT_DELAY = 3000; // 3 seconds
 const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
 let reconnectAttempts = 0;
 
+// Image display settings
+const ACTIVE_DISPLAY_DURATION = 10000; // 10 seconds
+const STANDBY_IMAGE = "./img/image_01.jpg";
+const ACTIVE_IMAGE = "./img/image_02.jpg";
+
 function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    log("Already connected!", "info");
+    console.log("Already connected!");
     return;
   }
 
-  updateStatus("connecting", "Connecting...");
-  log(`Connecting to ${WS_URL}...`, "info");
+  console.log(`Connecting to ${WS_URL}...`);
+  updateStatusIndicator("connecting");
 
   try {
     ws = new WebSocket(WS_URL);
 
     ws.onopen = function (event) {
-      log("Connected to WebSocket server", "info");
-      updateStatus("connected", "Connected");
-      updateButtons(true);
+      console.log("Connected to WebSocket server");
 
       // Reset reconnection attempts on successful connection
       reconnectAttempts = 0;
       connectionStartTime = Date.now();
 
+      // Update status indicator
+      updateStatusIndicator("connected");
+
       // Start heartbeat
       startHeartbeat();
 
       // Announce presence metadata
-      announcePresence("control");
+      announcePresence("playerStorm");
     };
 
     // Handle server ping frames (automatic pong response)
     ws.addEventListener("ping", () => {
-      log("Server ping received, pong sent automatically", "info");
+      console.log("Server ping received, pong sent automatically");
     });
 
     ws.onmessage = function (event) {
@@ -59,22 +60,23 @@ function connect() {
 
         // Handle different message types from server
         if (data.type === "welcome") {
-          log(`Server welcome: ${data.message}`, "info");
+          console.log(`Server welcome: ${data.message}`);
         } else if (data.type === "broadcast") {
-          log(
-            `Broadcast from ${data.from}: ${JSON.stringify(
-              data.data,
-              null,
-              2
-            )}`,
-            "received"
-          );
+          console.log(`Broadcast from ${data.from}:`, data.data);
+
+          // Check if the broadcast data contains a "post" type message
+          if (data.data && data.data.type === "post") {
+            handlePostMessage(data.data);
+          }
+        } else if (data.type === "post") {
+          // Direct post message (not wrapped in broadcast)
+          handlePostMessage(data);
         } else {
-          log(`Received: ${JSON.stringify(data, null, 2)}`, "received");
+          console.log("Received:", data);
         }
       } catch (e) {
         // If not JSON, log as plain text
-        log(`Received: ${event.data}`, "received");
+        console.log(`Received: ${event.data}`);
       }
     };
 
@@ -82,12 +84,14 @@ function connect() {
       const reason = event.wasClean
         ? "Connection closed cleanly"
         : "Connection lost";
-      log(
+      console.log(
         `${reason} (Code: ${event.code}, Reason: ${
           event.reason || "No reason provided"
-        })`,
-        "info"
+        })`
       );
+
+      // Update status indicator
+      updateStatusIndicator("disconnected");
 
       // Stop heartbeat
       stopHeartbeat();
@@ -97,31 +101,24 @@ function connect() {
         const connectionDuration = Math.round(
           (Date.now() - connectionStartTime) / 1000
         );
-        log(`Connection lasted ${connectionDuration} seconds`, "info");
+        console.log(`Connection lasted ${connectionDuration} seconds`);
       }
-
-      updateStatus("disconnected", "Disconnected");
-      updateButtons(false);
 
       // Auto-reconnect if not manual disconnect and within attempt limit
       if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         scheduleReconnect();
       } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        log(
-          "Maximum reconnection attempts reached. Please reconnect manually.",
-          "error"
+        console.error(
+          "Maximum reconnection attempts reached. Please reconnect manually."
         );
       }
     };
 
     ws.onerror = function (error) {
-      log(`WebSocket error occurred`, "error");
-      console.error("WebSocket error:", error);
+      console.error("WebSocket error occurred:", error);
     };
   } catch (error) {
-    log(`Failed to connect: ${error.message}`, "error");
-    updateStatus("disconnected", "Connection Failed");
-    updateButtons(false);
+    console.error(`Failed to connect: ${error.message}`);
   }
 }
 
@@ -143,9 +140,9 @@ function announcePresence(role) {
 
   try {
     ws.send(JSON.stringify(announcement));
-    log("Announce sent: " + JSON.stringify(announcement), "sent");
+    console.log("Announce sent:", announcement);
   } catch (e) {
-    log("Failed to send announce: " + e.message, "error");
+    console.error("Failed to send announce:", e.message);
   }
 }
 
@@ -165,76 +162,22 @@ function disconnect() {
   }
 }
 
-function sendMessage() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    log("Not connected to WebSocket server", "error");
-    return;
-  }
-
-  const message = messageInput.value.trim();
-  if (!message) {
-    log("Please enter a message to send", "error");
-    return;
-  }
-
-  try {
-    // Validate JSON
-    const jsonData = JSON.parse(message);
-
-    // Send the message
-    ws.send(message);
-    log(`Sent: ${JSON.stringify(jsonData, null, 2)}`, "sent");
-  } catch (error) {
-    log(`Invalid JSON: ${error.message}`, "error");
-  }
-}
-
-function updateStatus(status, text) {
-  statusEl.className = `status ${status}`;
-  statusEl.textContent = text;
-}
-
-function updateButtons(connected) {
-  connectBtn.disabled = connected;
-  disconnectBtn.disabled = !connected;
-  sendBtn.disabled = !connected;
-}
-
-function log(message, type = "info") {
-  const logEntry = document.createElement("div");
-  logEntry.className = `log-entry ${type}`;
-
-  const timestamp = new Date().toLocaleTimeString();
-  logEntry.innerHTML = `
-    <span class="timestamp">[${timestamp}]</span> ${message}
-  `;
-
-  logsEl.appendChild(logEntry);
-  logsEl.scrollTop = logsEl.scrollHeight;
-}
-
-function clearLogs() {
-  logsEl.innerHTML = "";
-}
-
 function startHeartbeat() {
   stopHeartbeat(); // Clear any existing heartbeat
 
-  // The server handles ping/pong automatically, but we can still send occasional
-  // application-level keepalive messages to ensure the connection stays active
+  // Send application-level keepalive messages
   heartbeatTimer = setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
-        // Send a lightweight keepalive message
         const keepAlive = JSON.stringify({
           type: "keepalive",
           timestamp: new Date().toISOString(),
-          clientId: "control",
+          clientId: "playerStorm",
         });
         ws.send(keepAlive);
-        log("Keepalive sent", "info");
+        console.log("Keepalive sent");
       } catch (error) {
-        log(`Failed to send keepalive: ${error.message}`, "error");
+        console.error(`Failed to send keepalive: ${error.message}`);
       }
     }
   }, HEARTBEAT_INTERVAL);
@@ -252,15 +195,10 @@ function scheduleReconnect() {
   reconnectAttempts++;
 
   const delay = RECONNECT_DELAY * Math.min(reconnectAttempts, 5); // Exponential backoff, max 15s
-  log(
+  console.log(
     `Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${
       delay / 1000
-    }s...`,
-    "info"
-  );
-  updateStatus(
-    "connecting",
-    `Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
+    }s...`
   );
 
   reconnectTimer = setTimeout(() => {
@@ -270,20 +208,56 @@ function scheduleReconnect() {
   }, delay);
 }
 
+function handlePostMessage(data) {
+  console.log("Post message received:", data);
+
+  const displayImage = document.getElementById("displayImage");
+  if (!displayImage) {
+    console.error("Display image element not found");
+    return;
+  }
+
+  // Clear any existing timer
+  if (imageResetTimer) {
+    clearTimeout(imageResetTimer);
+    imageResetTimer = null;
+  }
+
+  // Switch to active image
+  displayImage.src = ACTIVE_IMAGE;
+  console.log(`Switched to active image: ${ACTIVE_IMAGE}`);
+
+  // Schedule return to standby after 10 seconds
+  imageResetTimer = setTimeout(() => {
+    displayImage.src = STANDBY_IMAGE;
+    console.log(`Switched back to standby image: ${STANDBY_IMAGE}`);
+    imageResetTimer = null;
+  }, ACTIVE_DISPLAY_DURATION);
+}
+
+function updateStatusIndicator(status) {
+  const indicator = document.getElementById("statusIndicator");
+  if (!indicator) return;
+
+  // Remove all status classes
+  indicator.classList.remove("connected", "connecting", "disconnected");
+
+  // Add the current status class
+  if (status) {
+    indicator.classList.add(status);
+  }
+}
+
 // BroadSignPlay function that also connects to WebSocket
 function BroadSignPlay() {
-  log("BroadSignPlay() called - initiating WebSocket connection", "info");
+  console.log("BroadSignPlay() called - initiating WebSocket connection");
   isManualDisconnect = false;
   reconnectAttempts = 0;
   connect();
 }
 
-// Handle Enter key in textarea (Ctrl+Enter to send)
-messageInput.addEventListener("keydown", function (event) {
-  if (event.ctrlKey && event.key === "Enter") {
-    sendMessage();
-  }
+// Auto-connect on page load
+window.addEventListener("load", () => {
+  console.log("Page loaded - auto-connecting to WebSocket");
+  BroadSignPlay();
 });
-
-// Auto-connect on page load (optional)
-// window.addEventListener('load', connect);
