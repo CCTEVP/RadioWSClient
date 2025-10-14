@@ -8,7 +8,14 @@
 // ============================================================================
 
 const CONFIG = {
-  WS_URL: "wss://radiowsserver-763503917257.europe-west1.run.app/",
+  //WS_URL_BASE: "wss://radiowsserver-763503917257.europe-west1.run.app/",
+  WS_URL_BASE: "ws://localhost:8080/room/radio",
+  AUTH_TOKEN:
+    "eyJjbGllbnRJZCI6InRlc3QtY2xpZW50Iiwicm9vbSI6InJhZGlvIiwiZXhwaXJlc0F0Ijo0OTE0MDUzNDM1NjAwLCJtZXRhZGF0YSI6e30sImlzc3VlZEF0IjoxNzYwNDUzNDM1NjAwfQ.xiGw5MKTrsQhonWc8NFVJv6WiYXNUtBF52fBSmDF8J8",
+  get WS_URL() {
+    return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
+  },
+
   HEARTBEAT_INTERVAL: 30000, // 30 seconds
   RECONNECT_DELAY: 3000, // 3 seconds
   MAX_RECONNECT_ATTEMPTS: 20, // Allow reconnection for ~1 hour
