@@ -1,325 +1,78 @@
-let localWs = null;
-let localWsReady = false;
-let dynamicFrameId = "12343"; // default
-let adCopyId = "1290113894"; // default
-// Try to set from BroadSignObject immediately if available
-const frameIdInit = getBroadSignProperty("frame_id");
-if (typeof frameIdInit === "string" && frameIdInit !== "") {
-  dynamicFrameId = frameIdInit;
-  console.log("[INIT] BroadSignObject.frame_id found:", dynamicFrameId);
-} else {
-  console.log("[INIT] BroadSignObject present but frame_id missing or invalid");
-}
+// ============================================================================
+// RADIO WEBSOCKET CLIENT - PLAYER
+// Handles radio content synchronization via WebSocket and sends custom POPs
+// ============================================================================
 
-const adCopyIdInit = getBroadSignProperty("ad_copy_id");
-if (typeof adCopyIdInit === "string" && adCopyIdInit !== "") {
-  adCopyId = adCopyIdInit;
-  console.log("[INIT] BroadSignObject.ad_copy_id found:", adCopyId);
-} else {
-  console.log(
-    "[INIT] BroadSignObject present but ad_copy_id missing or invalid"
-  );
-}
+// ============================================================================
+// 1. CONFIGURATION & CONSTANTS
+// ============================================================================
 
-function hideBlueDot() {
-  const dot = document.getElementById("customPopDot");
-  if (dot) dot.style.opacity = "0";
-}
+const CONFIG = {
+  WS_URL: "wss://radiowsserver-763503917257.europe-west1.run.app/",
+  LOCAL_WS_URL: "ws://localhost:2326",
+  RECONNECT_DELAY: 3000, // ms
+  HEARTBEAT_INTERVAL: 30000, // 30 seconds
+  MAX_RECONNECT_ATTEMPTS: 20,
+  CUSTOM_POP_OFFSET: 3000, // Send POP 3000ms before slot ends
+  LOGGER_VISIBLE_DURATION: 5000, // ms
+  LOGGER_FADE_DURATION: 1000, // ms
+  NOW_PLAYING_DURATION: 10000, // ms
+  NOW_PLAYING_FADE_DURATION: 500, // ms
+};
 
-function showBlueDot() {
-  const dot = document.getElementById("customPopDot");
-  if (dot) dot.style.opacity = "1";
-}
+// ============================================================================
+// 2. STATE MANAGEMENT
+// ============================================================================
 
-function hideRedDot() {
-  const dot = document.getElementById("wsDot");
-  if (dot) dot.style.opacity = "0";
-}
+const State = {
+  // BroadSign Properties
+  frameId: null,
+  adCopyId: null,
+  playerId: null,
+  slotDuration: null,
+  customPopTimeout: null,
 
-function showRedDot() {
-  const dot = document.getElementById("wsDot");
-  if (dot) dot.style.opacity = "1";
-}
-// Simple WebSocket squares highlighter
-// Maps incoming payload advertiser.id to a square (1..10)
+  // WebSocket States
+  ws: null,
+  localWs: null,
+  reconnectTimer: null,
+  heartbeatTimer: null,
+  isManualDisconnect: false,
+  connectionStartTime: null,
+  reconnectAttempts: 0,
 
-const WS_URL = "wss://radiowsserver-763503917257.europe-west1.run.app/";
-let ws;
-let reconnectTimer = null;
-let heartbeatTimer = null;
-let isManualDisconnect = false;
-let connectionStartTime = null;
-const RECONNECT_DELAY = 3000; // ms
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds
-const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
-let reconnectAttempts = 0;
+  // Message Data
+  messagesReceived: [{ result: "No messages received" }],
+  contentId: null,
+  contentName: null,
+  advertiserId: null,
+  advertiserName: null,
 
-const squaresContainer = document.getElementById("squares");
-const squares = squaresContainer
-  ? Array.from(squaresContainer.querySelectorAll(".square"))
-  : [];
-const wsDot = document.getElementById("wsDot");
+  // Timers
+  customPopTimer: null,
+  nowPlayingTimeout: null,
+  loggerTimeout: null,
 
-function connect() {
-  if (
-    ws &&
-    (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
-  ) {
-    return;
-  }
+  // UI Elements (cached)
+  progressBarFill: null,
+  loggerElement: null,
+  loggerContainer: null,
+  squaresContainer: null,
+  squares: [],
+  wsDot: null,
+};
 
-  try {
-    ws = new WebSocket(WS_URL);
+// ============================================================================
+// 3. UTILITY FUNCTIONS
+// ============================================================================
 
-    ws.onopen = () => {
-      clearTimeout(reconnectTimer);
-      console.log("[WS] Connected");
-      hideRedDot();
-
-      // Reset reconnection attempts on successful connection
-      reconnectAttempts = 0;
-      connectionStartTime = Date.now();
-
-      // Wait for response in onmessage
-      // Start heartbeat
-      startHeartbeat();
-
-      // Announce presence / broadcast metadata
-      announcePresence("player");
-    };
-
-    // Handle server ping frames (automatic pong response)
-    ws.addEventListener("ping", () => {
-      console.log("[WS] Server ping received, pong sent automatically");
-    });
-
-    ws.onmessage = (evt) => {
-      // Wait for response in onmessage
-      handleMessage(evt.data);
-    };
-
-    ws.onerror = (err) => {
-      console.warn("[WS] Error", err);
-    };
-
-    ws.onclose = () => {
-      console.log("[WS] Closed - will attempt reconnect");
-
-      // Stop heartbeat
-      localWs.onmessage = function (event) {
-        try {
-          const resp = JSON.parse(event.data);
-          if (
-            resp &&
-            resp.rc &&
-            resp.rc.action === "custom_pop" &&
-            resp.rc.status === "1"
-          ) {
-            hideBlueDot();
-            console.log("[LocalWS] CustomPOP success, blue dot hidden");
-          }
-        } catch (e) {
-          // Ignore parse errors
-        }
-      };
-      stopHeartbeat();
-
-      // Show connection time if it was established
-      if (connectionStartTime) {
-        const connectionDuration = Math.round(
-          (Date.now() - connectionStartTime) / 1000
-        );
-        console.log(`[WS] Connection lasted ${connectionDuration} seconds`);
-      }
-
-      showRedDot();
-
-      // Auto-reconnect if not manual disconnect and within attempt limit
-      if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        scheduleReconnect();
-      } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.warn("[WS] Maximum reconnection attempts reached");
-      }
-    };
-  } catch (e) {
-    console.error("[WS] Connection exception", e);
-    scheduleReconnect();
-  }
-}
-
-function announcePresence(role) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-  const announcement = {
-    type: "announce",
-    timestamp: new Date().toISOString(),
-    clientId: role,
-    userAgent: navigator.userAgent,
-    screen: {
-      width: window.screen?.width || null,
-      height: window.screen?.height || null,
-    },
-    pageVisibility: document.visibilityState,
-    location: { href: location.href },
-  };
-
-  try {
-    ws.send(JSON.stringify(announcement));
-    console.log("[WS] Announce sent", announcement);
-  } catch (e) {
-    console.warn("[WS] Failed to send announce", e);
-  }
-}
-
-function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
-  reconnectAttempts++;
-
-  const delay = RECONNECT_DELAY * Math.min(reconnectAttempts, 5); // Exponential backoff, max 15s
-  console.log(
-    `[WS] Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${
-      delay / 1000
-    }s...`
-  );
-
-  reconnectTimer = setTimeout(() => {
-    if (!isManualDisconnect && reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
-      connect();
-    }
-  }, delay);
-}
-
-function handleMessage(raw) {
-  let data;
-  try {
-    data = JSON.parse(raw);
-  } catch (e) {
-    console.warn("[WS] Non-JSON message ignored", raw);
-    return;
-  }
-
-  // Handle different message types from server
-  if (data.type === "welcome") {
-    console.log(`[WS] Server welcome: ${data.message}`);
-    return;
-  }
-
-  // Handle broadcast messages (server wraps client messages in broadcast envelope)
-  if (data.type === "broadcast") {
-    console.log(`[WS] Broadcast from ${data.from}`);
-    // Extract the actual payload from the broadcast wrapper
-    data = data.data;
-  }
-  // Only process messages where the (unwrapped) type is 'post'
-  if (!data || data.type !== "post") {
-    // Silently ignore other types (could log if needed)
-    return;
-  }
-
-  // Expected structure now:
-  // {
-  //   "type": "post",
-  //   "timestamp": "...",
-  //   "data": { "advertiser": { "id": "1" | 1, ... }, ... }
-  // }
-  const payload = data.data;
-  if (!payload) {
-    console.warn("[WS] 'post' message missing data payload", data);
-    return;
-  }
-
-  // Locate advertiser object (direct or nested one level deep)
-  let core = payload;
-  if (core && typeof core === "object" && !core.advertiser) {
-    for (const k in core) {
-      if (core[k] && typeof core[k] === "object" && core[k].advertiser) {
-        core = core[k];
-        break;
-      }
-    }
-  }
-
-  if (!core || !core.advertiser || core.advertiser.id == null) {
-    console.warn("[WS] 'post' payload missing advertiser.id", data);
-    return;
-  }
-
-  // Advertiser id may now be a string. Convert to integer.
-  let advertiserIdRaw = core.advertiser.id;
-  if (typeof advertiserIdRaw === "string")
-    advertiserIdRaw = advertiserIdRaw.trim();
-  const advertiserId = parseInt(advertiserIdRaw, 10);
-  if (!Number.isInteger(advertiserId)) {
-    console.warn("[WS] advertiser.id not a valid integer", core.advertiser.id);
-    return;
-  }
-
-  console.log(
-    `[WS] Highlighting square for advertiser ID (post): ${advertiserId}`
-  );
-  highlightSquare(advertiserId);
-
-  // Update Now Playing display if content.name is available
-  if (payload.content && payload.content.name && payload.advertiser.name) {
-    updateNowPlaying(payload.content.name, payload.advertiser.name);
-  }
-
-  // After highlighting, open local ws://localhost:2326 and send the custom payload
-  sendCustomPOP();
-
-  // Utility function to safely retrieve a property from BroadSignObject
-  // Local WebSocket logic for sending custom payload after highlight
-
-  function sendCustomPOP() {
-    const LOCAL_WS_URL = "ws://localhost:2326";
-    const PAYLOAD = {
-      rc: {
-        version: "1",
-        id: "1",
-        action: "custom_pop",
-        frame_id: dynamicFrameId,
-        content_id: adCopyId,
-        external_value_1: "radio_content_activated",
-        custom_field: "<custom_json>",
-        name: "RADIO CONTENT",
-      },
-    };
-
-    // If already open, just send
-    if (localWs && localWs.readyState === WebSocket.OPEN) {
-      try {
-        localWs.send(JSON.stringify(PAYLOAD));
-        console.log("[LocalWS] Sent Custom POP");
-      } catch (e) {
-        console.warn("[LocalWS] Failed to send Custom POP", e);
-      }
-      return;
-    }
-
-    // If not open, create and send on open
-    try {
-      localWs = new WebSocket(LOCAL_WS_URL);
-      localWs.onopen = function () {
-        try {
-          localWs.send(JSON.stringify(PAYLOAD));
-          console.log("[LocalWS] Sent custom payload (on open)");
-        } catch (e) {
-          console.warn("[LocalWS] Failed to send payload (on open)", e);
-        }
-      };
-      localWs.onerror = function (err) {
-        console.warn("[LocalWS] Error", err);
-      };
-      localWs.onclose = function () {
-        // Optionally, set localWs to null to allow reconnect on next trigger
-        localWs = null;
-      };
-    } catch (e) {
-      console.warn("[LocalWS] Exception opening local ws", e);
-    }
-  }
-}
-function getBroadSignProperty(propName) {
+/**
+ * Safely retrieves a property from BroadSignObject with fallback
+ * @param {string} propName - Property name to retrieve
+ * @param {*} defaultValue - Default value if property not found
+ * @returns {*} Property value or default
+ */
+function getBroadSignProperty(propName, defaultValue) {
   if (
     typeof window.BroadSignObject === "object" &&
     window.BroadSignObject !== null &&
@@ -327,118 +80,728 @@ function getBroadSignProperty(propName) {
   ) {
     const value = window.BroadSignObject[propName];
     if (typeof value === "string" && value.trim() !== "") {
-      return value.trim();
+      const trimmedValue = value.trim();
+      Logger.log(`[INIT] BroadSignObject.${propName} found:`, trimmedValue);
+      return trimmedValue;
     }
-    return value;
+    if (value !== null && value !== undefined) {
+      Logger.log(`[INIT] BroadSignObject.${propName} found:`, value);
+      return value;
+    }
   }
-  return undefined;
+  return defaultValue;
 }
 
-let nowPlayingTimeout = null;
-
-function updateNowPlaying(content, advertiser) {
-  const nowPlayingContentElement = document.getElementById("nowPlayingContent");
-  const nowPlayingAdvertiserElement = document.getElementById(
-    "nowPlayingAdvertiser"
+/**
+ * Initialize BroadSign configuration from BroadSignObject
+ */
+function initializeBroadSignConfig() {
+  State.frameId = getBroadSignProperty("frame_id", "12343");
+  State.adCopyId = getBroadSignProperty("ad_copy_id", "1290113894");
+  State.playerId = getBroadSignProperty("player_id", "759244535");
+  State.slotDuration = parseInt(
+    getBroadSignProperty("expected_slot_duration_ms", "10000"),
+    10
   );
-  const nowPlayingContainer = document.getElementById("nowPlayingContainer");
-  if (nowPlayingContentElement && content) {
-    nowPlayingContentElement.textContent = content;
-    nowPlayingAdvertiserElement.textContent = advertiser;
-    if (nowPlayingContainer) {
-      // Clear any existing timeout
-      if (nowPlayingTimeout) {
-        clearTimeout(nowPlayingTimeout);
-      }
+  State.customPopTimeout = State.slotDuration - CONFIG.CUSTOM_POP_OFFSET;
 
-      // Show the container and remove fade-out class
-      nowPlayingContainer.style.display = "block";
-      nowPlayingContainer.classList.remove("fade-out");
+  Logger.log(`[INIT] Slot duration set to ${State.slotDuration}ms`);
+  Logger.log(
+    `[INIT] Custom PoP timeout set to ${State.customPopTimeout}ms (reduced by ${CONFIG.CUSTOM_POP_OFFSET}ms)`
+  );
+}
 
-      // Schedule fade-out after 10 seconds
-      nowPlayingTimeout = setTimeout(() => {
-        nowPlayingContainer.classList.add("fade-out");
-        // Hide completely after transition completes (0.5s)
-        setTimeout(() => {
-          nowPlayingContainer.style.display = "none";
-        }, 500);
-      }, 10000);
+/**
+ * Initialize DOM element references
+ */
+function initializeDOMElements() {
+  State.squaresContainer = document.getElementById("squares");
+  State.squares = State.squaresContainer
+    ? Array.from(State.squaresContainer.querySelectorAll(".square"))
+    : [];
+  State.wsDot = document.getElementById("wsDot");
+}
+
+// ============================================================================
+// 4. LOGGER MODULE
+// ============================================================================
+
+const Logger = {
+  /**
+   * Logs a message to the visual logger and console
+   * @param {string} message - Log message
+   * @param {*} data - Optional data to log
+   */
+  log(message, data = null) {
+    // Initialize logger elements if not already done
+    if (!State.loggerElement) {
+      State.loggerElement = document.getElementById("logger");
+      State.loggerContainer = document.getElementById("loggerContainer");
     }
-    console.log("[UI] Now Playing updated:", content, advertiser);
-  }
-}
 
-function highlightSquare(id) {
-  // id 1 maps to index 0, etc.
-  if (id < 1 || id > squares.length) {
-    console.warn("Advertiser id out of range (1.." + squares.length + "):", id);
-    return;
-  }
+    if (!State.loggerElement || !State.loggerContainer) return;
 
-  // Clear existing active state
-  squares.forEach((sq) => sq.classList.remove("active"));
+    // Format message with timestamp
+    const timestamp = new Date().toISOString().split("T")[1].substring(0, 12);
+    let logMessage = `[${timestamp}] ${message}`;
 
-  const target = squares[id - 1];
-  if (!target) return;
-
-  target.classList.add("active");
-  target.classList.remove("pulse");
-  // retrigger pulse animation
-  void target.offsetWidth; // force reflow
-  target.classList.add("pulse");
-}
-
-function startHeartbeat() {
-  stopHeartbeat(); // Clear any existing heartbeat
-
-  // Send lightweight keepalive messages (server handles native ping/pong)
-  heartbeatTimer = setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        // Send a lightweight keepalive message
-        const keepAlive = JSON.stringify({
-          type: "keepalive",
-          timestamp: new Date().toISOString(),
-          clientId: "player",
-        });
-        ws.send(keepAlive);
-        console.log("[WS] Keepalive sent");
-      } catch (error) {
-        console.error(`[WS] Failed to send keepalive: ${error.message}`);
+    if (data !== null) {
+      if (typeof data === "object") {
+        logMessage += " " + JSON.stringify(data);
+      } else {
+        logMessage += " " + data;
       }
     }
-  }, HEARTBEAT_INTERVAL);
-}
 
-function stopHeartbeat() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
+    // Add to textarea
+    State.loggerElement.value += logMessage + "\n";
+    State.loggerElement.scrollTop = State.loggerElement.scrollHeight;
 
-// Add disconnect function for manual disconnection
-function disconnect() {
-  if (ws) {
-    isManualDisconnect = true;
-    stopHeartbeat();
-    clearTimeout(reconnectTimer);
-    ws.close(1000, "User initiated disconnect");
-    ws = null;
-    connectionStartTime = null;
+    // Also log to console for debugging
+    console.log(message, data !== null ? data : "");
 
-    // Reset manual disconnect flag after a delay
+    this.show();
+  },
+
+  /**
+   * Shows the logger with fade-in animation
+   */
+  show() {
+    if (!State.loggerContainer) return;
+
+    State.loggerContainer.style.display = "block";
+    // Force reflow
+    void State.loggerContainer.offsetWidth;
+    State.loggerContainer.classList.add("show");
+
+    // Clear existing timeout
+    if (State.loggerTimeout) {
+      clearTimeout(State.loggerTimeout);
+    }
+
+    // Hide after configured duration
+    State.loggerTimeout = setTimeout(() => {
+      this.hide();
+    }, CONFIG.LOGGER_VISIBLE_DURATION);
+  },
+
+  /**
+   * Hides the logger with fade-out animation
+   */
+  hide() {
+    if (!State.loggerContainer) return;
+
+    State.loggerContainer.classList.remove("show");
+    // Wait for fade out transition to complete
     setTimeout(() => {
-      isManualDisconnect = false;
-    }, 1000);
-  }
+      State.loggerContainer.style.display = "none";
+    }, CONFIG.LOGGER_FADE_DURATION);
+  },
+};
+
+// ============================================================================
+// 5. UI CONTROLLERS
+// ============================================================================
+
+const UIController = {
+  // Status Dots
+  dots: {
+    hideBlue() {
+      const dot = document.getElementById("customPopDot");
+      if (dot) dot.style.opacity = "0";
+    },
+
+    showBlue() {
+      const dot = document.getElementById("customPopDot");
+      if (dot) dot.style.opacity = "1";
+    },
+
+    hideRed() {
+      const dot = document.getElementById("wsDot");
+      if (dot) dot.style.opacity = "0";
+    },
+
+    showRed() {
+      const dot = document.getElementById("wsDot");
+      if (dot) dot.style.opacity = "1";
+    },
+  },
+
+  // Progress Bar
+  progressBar: {
+    start() {
+      if (!State.progressBarFill) {
+        State.progressBarFill = document.getElementById("progressBarFill");
+      }
+
+      if (State.progressBarFill) {
+        // Reset progress bar to 0
+        State.progressBarFill.style.transition = "none";
+        State.progressBarFill.style.width = "0%";
+
+        // Force reflow to apply the reset
+        void State.progressBarFill.offsetWidth;
+
+        // Start animation from 0 to 100% over slotDuration
+        State.progressBarFill.style.transition = `width ${State.slotDuration}ms linear`;
+        State.progressBarFill.style.width = "100%";
+
+        Logger.log(
+          `[PROGRESS] Started progress bar animation for ${State.slotDuration}ms`
+        );
+      }
+    },
+
+    reset() {
+      if (State.progressBarFill) {
+        State.progressBarFill.style.transition = "none";
+        State.progressBarFill.style.width = "0%";
+      }
+    },
+  },
+
+  // Now Playing Display
+  nowPlaying: {
+    update(content, advertiser) {
+      const contentElement = document.getElementById("nowPlayingContent");
+      const advertiserElement = document.getElementById("nowPlayingAdvertiser");
+      const container = document.getElementById("nowPlayingContainer");
+
+      if (!contentElement || !content) return;
+
+      contentElement.textContent = content;
+      advertiserElement.textContent = advertiser;
+
+      if (container) {
+        // Clear any existing timeout
+        if (State.nowPlayingTimeout) {
+          clearTimeout(State.nowPlayingTimeout);
+        }
+
+        // Show the container and remove fade-out class
+        container.style.display = "block";
+        container.classList.remove("fade-out");
+
+        // Schedule fade-out after configured duration
+        State.nowPlayingTimeout = setTimeout(() => {
+          container.classList.add("fade-out");
+          // Hide completely after transition completes
+          setTimeout(() => {
+            container.style.display = "none";
+          }, CONFIG.NOW_PLAYING_FADE_DURATION);
+        }, CONFIG.NOW_PLAYING_DURATION);
+      }
+
+      Logger.log("[UI] Now Playing updated:", { content, advertiser });
+    },
+  },
+
+  // Advertiser Squares
+  squares: {
+    highlight(id) {
+      // id 1 maps to index 0, etc.
+      if (id < 1 || id > State.squares.length) {
+        Logger.log(
+          `[UI] Advertiser id out of range (1..${State.squares.length}):`,
+          id
+        );
+        return;
+      }
+
+      // Clear existing active state
+      State.squares.forEach((sq) => sq.classList.remove("active"));
+
+      const target = State.squares[id - 1];
+      if (!target) return;
+
+      target.classList.add("active");
+      target.classList.remove("pulse");
+      // Retrigger pulse animation
+      void target.offsetWidth; // force reflow
+      target.classList.add("pulse");
+    },
+  },
+};
+
+// ============================================================================
+// 6. WEBSOCKET MODULE (Main Server)
+// ============================================================================
+
+const WebSocketController = {
+  /**
+   * Establishes WebSocket connection to main server
+   */
+  connect() {
+    if (
+      State.ws &&
+      (State.ws.readyState === WebSocket.OPEN ||
+        State.ws.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+
+    try {
+      State.ws = new WebSocket(CONFIG.WS_URL);
+
+      State.ws.onopen = () => {
+        clearTimeout(State.reconnectTimer);
+        Logger.log("[WS] Connected");
+        UIController.dots.hideRed();
+
+        // Reset reconnection attempts on successful connection
+        State.reconnectAttempts = 0;
+        State.connectionStartTime = Date.now();
+
+        this.startHeartbeat();
+        this.announcePresence("player");
+      };
+
+      State.ws.addEventListener("ping", () => {
+        Logger.log("[WS] Server ping received, pong sent automatically");
+      });
+
+      State.ws.onmessage = (evt) => {
+        MessageHandler.handleMessage(evt.data);
+      };
+
+      State.ws.onerror = (err) => {
+        Logger.log("[WS] Error", err);
+      };
+
+      State.ws.onclose = () => {
+        Logger.log("[WS] Closed - will attempt reconnect");
+
+        this.stopHeartbeat();
+
+        // Show connection time if it was established
+        if (State.connectionStartTime) {
+          const connectionDuration = Math.round(
+            (Date.now() - State.connectionStartTime) / 1000
+          );
+          Logger.log(`[WS] Connection lasted ${connectionDuration} seconds`);
+        }
+
+        UIController.dots.showRed();
+
+        // Auto-reconnect if not manual disconnect and within attempt limit
+        if (
+          !State.isManualDisconnect &&
+          State.reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS
+        ) {
+          this.scheduleReconnect();
+        } else if (State.reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
+          Logger.log("[WS] Maximum reconnection attempts reached");
+        }
+      };
+    } catch (e) {
+      Logger.log("[WS] Connection exception", e);
+      this.scheduleReconnect();
+    }
+  },
+
+  /**
+   * Announces player presence to server
+   */
+  announcePresence(role) {
+    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) return;
+
+    const announcement = {
+      type: "announce",
+      timestamp: new Date().toISOString(),
+      clientId: role,
+      userAgent: navigator.userAgent,
+      screen: {
+        width: window.screen?.width || null,
+        height: window.screen?.height || null,
+      },
+      pageVisibility: document.visibilityState,
+      location: { href: location.href },
+    };
+
+    try {
+      State.ws.send(JSON.stringify(announcement));
+      Logger.log("[WS] Announce sent", announcement);
+    } catch (e) {
+      Logger.log("[WS] Failed to send announce", e);
+    }
+  },
+
+  /**
+   * Schedules reconnection with exponential backoff
+   */
+  scheduleReconnect() {
+    clearTimeout(State.reconnectTimer);
+    State.reconnectAttempts++;
+
+    const delay = CONFIG.RECONNECT_DELAY * Math.min(State.reconnectAttempts, 5);
+    Logger.log(
+      `[WS] Reconnection attempt ${State.reconnectAttempts}/${
+        CONFIG.MAX_RECONNECT_ATTEMPTS
+      } in ${delay / 1000}s...`
+    );
+
+    State.reconnectTimer = setTimeout(() => {
+      if (
+        !State.isManualDisconnect &&
+        State.reconnectAttempts <= CONFIG.MAX_RECONNECT_ATTEMPTS
+      ) {
+        this.connect();
+      }
+    }, delay);
+  },
+
+  /**
+   * Starts heartbeat interval
+   */
+  startHeartbeat() {
+    this.stopHeartbeat(); // Clear any existing heartbeat
+
+    State.heartbeatTimer = setInterval(() => {
+      if (State.ws && State.ws.readyState === WebSocket.OPEN) {
+        try {
+          const keepAlive = JSON.stringify({
+            type: "keepalive",
+            timestamp: new Date().toISOString(),
+            clientId: "player",
+          });
+          State.ws.send(keepAlive);
+          Logger.log("[WS] Keepalive sent");
+        } catch (error) {
+          Logger.log(`[WS] Failed to send keepalive: ${error.message}`);
+        }
+      }
+    }, CONFIG.HEARTBEAT_INTERVAL);
+  },
+
+  /**
+   * Stops heartbeat interval
+   */
+  stopHeartbeat() {
+    if (State.heartbeatTimer) {
+      clearInterval(State.heartbeatTimer);
+      State.heartbeatTimer = null;
+    }
+  },
+
+  /**
+   * Manually disconnects WebSocket
+   */
+  disconnect() {
+    if (State.ws) {
+      State.isManualDisconnect = true;
+      this.stopHeartbeat();
+      clearTimeout(State.reconnectTimer);
+      State.ws.close(1000, "User initiated disconnect");
+      State.ws = null;
+      State.connectionStartTime = null;
+
+      // Reset manual disconnect flag after a delay
+      setTimeout(() => {
+        State.isManualDisconnect = false;
+      }, 1000);
+    }
+  },
+};
+
+// ============================================================================
+// 7. LOCAL WEBSOCKET MODULE (Custom POP)
+// ============================================================================
+
+const LocalWebSocketController = {
+  /**
+   * Starts timer to send custom POP before slot ends
+   */
+  startCustomPopTimer() {
+    // Clear any existing timer
+    if (State.customPopTimer) {
+      clearTimeout(State.customPopTimer);
+    }
+
+    Logger.log(
+      `[TIMER] Starting custom POP timer for ${State.customPopTimeout}ms`
+    );
+    State.customPopTimer = setTimeout(() => {
+      Logger.log(
+        `[TIMER] Executing sendCustomPOP after ${State.customPopTimeout}ms`
+      );
+      this.sendCustomPOP();
+    }, State.customPopTimeout);
+  },
+
+  /**
+   * Builds flattened payload from messages
+   */
+  buildPayload() {
+    const customFieldData = {
+      player_id: State.playerId,
+      frame_id: State.frameId,
+    };
+
+    // Flatten messages array into individual properties (m1_, m2_, etc.)
+    State.messagesReceived.forEach((msg, index) => {
+      const prefix = `m${index + 1}_`;
+      customFieldData[`${prefix}t`] = msg.t || "";
+      customFieldData[`${prefix}r`] = msg.r || "";
+      customFieldData[`${prefix}a_id`] = msg.a?.i || "";
+      customFieldData[`${prefix}a_name`] = msg.a?.n || "";
+      customFieldData[`${prefix}c_id`] = msg.c?.i || "";
+      customFieldData[`${prefix}c_name`] = msg.c?.n || "";
+    });
+
+    return {
+      rc: {
+        version: "1",
+        id: "1",
+        action: "custom_pop",
+        frame_id: State.frameId,
+        content_id: State.adCopyId,
+        external_value_1: "RADIO CONTENT ACTIVATED",
+        external_value_2: JSON.stringify(customFieldData),
+        name: "RADIO CONTENT",
+      },
+    };
+  },
+
+  /**
+   * Sends custom POP to local WebSocket
+   */
+  sendCustomPOP() {
+    const payload = this.buildPayload();
+    Logger.log("[LocalWS] Preparing to send custom_pop payload:", payload);
+
+    UIController.dots.showBlue();
+
+    // If already open, just send
+    if (State.localWs && State.localWs.readyState === WebSocket.OPEN) {
+      try {
+        State.localWs.send(JSON.stringify(payload));
+        Logger.log("[LocalWS] Sent Custom POP");
+      } catch (e) {
+        Logger.log("[LocalWS] Failed to send Custom POP", e);
+      }
+      return;
+    }
+
+    // If not open, create and send on open
+    this.openAndSend(payload);
+  },
+
+  /**
+   * Opens local WebSocket connection and sends payload
+   */
+  openAndSend(payload) {
+    try {
+      State.localWs = new WebSocket(CONFIG.LOCAL_WS_URL);
+
+      State.localWs.onopen = () => {
+        try {
+          State.localWs.send(JSON.stringify(payload));
+          Logger.log("[LocalWS] Sent custom payload (on open)");
+        } catch (e) {
+          Logger.log("[LocalWS] Failed to send payload (on open)", e);
+        }
+      };
+
+      State.localWs.onmessage = (event) => {
+        this.handleResponse(event.data);
+      };
+
+      State.localWs.onerror = (err) => {
+        Logger.log("[LocalWS] Error", err);
+      };
+
+      State.localWs.onclose = () => {
+        Logger.log("[LocalWS] Connection closed");
+        State.localWs = null;
+      };
+    } catch (e) {
+      Logger.log("[LocalWS] Exception opening local ws", e);
+    }
+  },
+
+  /**
+   * Handles response from local WebSocket
+   */
+  handleResponse(data) {
+    try {
+      const resp = JSON.parse(data);
+      Logger.log("[LocalWS] Response received:", resp);
+
+      // Check for successful custom_pop response
+      if (
+        resp &&
+        resp.rc &&
+        resp.rc.action === "custom_pop" &&
+        resp.rc.status === "1"
+      ) {
+        UIController.dots.hideBlue();
+        Logger.log("[LocalWS] CustomPOP success, blue dot hidden");
+      }
+    } catch (e) {
+      Logger.log("[LocalWS] Failed to parse response", e);
+    }
+  },
+};
+
+// ============================================================================
+// 8. MESSAGE HANDLERS
+// ============================================================================
+
+const MessageHandler = {
+  /**
+   * Handles incoming WebSocket messages
+   */
+  handleMessage(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      Logger.log("[WS] Non-JSON message ignored", raw);
+      return;
+    }
+
+    // Handle different message types from server
+    if (data.type === "welcome") {
+      Logger.log(`[WS] Server welcome: ${data.message}`);
+      return;
+    }
+
+    // Handle broadcast messages (server wraps client messages in broadcast envelope)
+    if (data.type === "broadcast") {
+      Logger.log(`[WS] Broadcast from ${data.from}`);
+      data = data.data; // Extract the actual payload
+    }
+
+    // Only process messages where the (unwrapped) type is 'post'
+    if (!data || data.type !== "post") {
+      return; // Silently ignore other types
+    }
+
+    this.handlePostMessage(data);
+  },
+
+  /**
+   * Handles 'post' type messages
+   */
+  handlePostMessage(data) {
+    // Save the timestamp from the post message before accessing nested data
+    const messageTimestamp = data.timestamp;
+    const payload = data.data;
+
+    if (!payload) {
+      Logger.log("[WS] 'post' message missing data payload", data);
+      return;
+    }
+
+    // Locate advertiser object (direct or nested one level deep)
+    const core = this.extractCore(payload);
+
+    if (!core || !core.advertiser || !core.advertiser.id) {
+      Logger.log("[WS] 'post' payload missing advertiser.id", data);
+      return;
+    }
+
+    // Convert advertiser id string to integer for highlighting
+    const advertiserIdValue = parseInt(core.advertiser.id, 10);
+    if (!Number.isInteger(advertiserIdValue)) {
+      Logger.log("[WS] advertiser.id not a valid integer", core.advertiser.id);
+      return;
+    }
+
+    // Store message
+    this.storeMessage(messageTimestamp, core);
+
+    // Update global state
+    State.advertiserId = core.advertiser.id;
+    State.advertiserName = core.advertiser.name;
+    State.contentId = core.content.id;
+    State.contentName = core.content.name;
+
+    Logger.log("[WS] Post data updated:", {
+      advertiserId: State.advertiserId,
+      advertiserName: State.advertiserName,
+      contentId: State.contentId,
+      contentName: State.contentName,
+    });
+
+    // Update UI
+    Logger.log(
+      `[WS] Highlighting square for advertiser ID (post): ${advertiserIdValue}`
+    );
+    UIController.squares.highlight(advertiserIdValue);
+    UIController.nowPlaying.update(State.contentName, State.advertiserName);
+  },
+
+  /**
+   * Extracts core data from payload (handles nested structures)
+   */
+  extractCore(payload) {
+    let core = payload;
+    if (core && typeof core === "object" && !core.advertiser) {
+      for (const k in core) {
+        if (core[k] && typeof core[k] === "object" && core[k].advertiser) {
+          core = core[k];
+          break;
+        }
+      }
+    }
+    return core;
+  },
+
+  /**
+   * Stores message in messagesReceived array
+   */
+  storeMessage(timestamp, core) {
+    State.messagesReceived.push({
+      t: timestamp || new Date().toISOString(),
+      r: new Date().toISOString(),
+      a: {
+        i: core.advertiser.id,
+        n: core.advertiser.name,
+      },
+      c: {
+        i: core.content.id,
+        n: core.content.name,
+      },
+    });
+
+    Logger.log(
+      "[WS] Message stored in messagesReceived array. Total messages:",
+      State.messagesReceived.length
+    );
+    Logger.log("[WS] Current messagesReceived:", State.messagesReceived);
+  },
+};
+
+// ============================================================================
+// 9. INITIALIZATION & LIFECYCLE
+// ============================================================================
+
+/**
+ * Main initialization function (BroadSignPlay)
+ */
+function BroadSignPlay() {
+  State.isManualDisconnect = false;
+  State.reconnectAttempts = 0;
+
+  WebSocketController.connect();
+  UIController.progressBar.start();
+  LocalWebSocketController.startCustomPopTimer();
 }
 
-// Expose a manual trigger similar to BroadSignPlay style if needed
-function BroadSignPlay() {
-  isManualDisconnect = false;
-  reconnectAttempts = 0;
-  connect();
-}
+/**
+ * Initialize application on page load
+ */
+window.addEventListener("load", () => {
+  initializeBroadSignConfig();
+  initializeDOMElements();
+  Logger.log("[INIT] Page loaded - auto-connecting to WebSocket");
+  BroadSignPlay();
+});
+
+// ============================================================================
+// PUBLIC API
+// ============================================================================
+
 window.BroadSignPlay = BroadSignPlay;
-window.disconnect = disconnect;
+window.disconnect = WebSocketController.disconnect.bind(WebSocketController);

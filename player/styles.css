@@ -145,3 +145,54 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* Progress bar at bottom of screen */
+.progress-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: 2px;
+  background: transparent;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #00ff00; /* Green */
+  transition: width linear;
+}
+
+/* Logger textarea */
+.logger-container {
+  position: fixed;
+  bottom: 0px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1000px;
+  height: 200px;
+  z-index: 9000;
+  opacity: 0;
+  transition: opacity 500ms ease-in-out;
+}
+
+.logger-container.show {
+  opacity: 1;
+}
+
+.logger {
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fbff00;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px solid #fbff00;
+  border-radius: 4px;
+  resize: none;
+  overflow-y: auto;
+  box-sizing: border-box;
+}

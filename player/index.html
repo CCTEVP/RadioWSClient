@@ -9,7 +9,7 @@
   <body>
     <!-- Fullscreen dark background just for demo; replace/remove to overlay on real player content -->
     <div class="demo-bg" aria-hidden="true">
-      <img src="./img/BMO_Welcome_1080x1920.jpg" alt="Demo background" />
+      <img src="./img/background.jpg" alt="Demo background" />
     </div>
 
     <!-- Now Playing container -->
@@ -98,6 +98,17 @@
 
     <!-- Blue dot for CustomPOP status -->
     <div id="customPopDot" aria-label="CustomPOP status indicator"></div>
+
+    <!-- Progress bar -->
+    <div id="progressBar" class="progress-bar">
+      <div id="progressBarFill" class="progress-bar-fill"></div>
+    </div>
+
+    <!-- Logger textarea -->
+    <div id="loggerContainer" class="logger-container" style="display: none">
+      <textarea id="logger" class="logger" readonly></textarea>
+    </div>
+
     <script src="./app.js"></script>
   </body>
 </html>

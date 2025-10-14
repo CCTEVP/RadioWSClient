@@ -1,263 +1,384 @@
-let ws = null;
-let heartbeatTimer = null;
-let reconnectTimer = null;
-let isManualDisconnect = false;
-let connectionStartTime = null;
-let imageResetTimer = null;
+// ============================================================================
+// RADIO WEBSOCKET CLIENT - PLAYER STORM
+// Image switcher based on WebSocket post messages
+// ============================================================================
 
-// WebSocket connection URL
-const WS_URL = "wss://radiowsserver-763503917257.europe-west1.run.app/";
+// ============================================================================
+// 1. CONFIGURATION & CONSTANTS
+// ============================================================================
 
-// Connection keepalive settings
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds
-const RECONNECT_DELAY = 3000; // 3 seconds
-const MAX_RECONNECT_ATTEMPTS = 20; // Allow reconnection for ~1 hour
-let reconnectAttempts = 0;
+const CONFIG = {
+  WS_URL: "wss://radiowsserver-763503917257.europe-west1.run.app/",
+  HEARTBEAT_INTERVAL: 30000, // 30 seconds
+  RECONNECT_DELAY: 3000, // 3 seconds
+  MAX_RECONNECT_ATTEMPTS: 20, // Allow reconnection for ~1 hour
+  ACTIVE_DISPLAY_DURATION: 10000, // 10 seconds
+  STANDBY_IMAGE: "./img/image_01.jpg",
+  ACTIVE_IMAGE: "./img/image_02.jpg",
+};
 
-// Image display settings
-const ACTIVE_DISPLAY_DURATION = 10000; // 10 seconds
-const STANDBY_IMAGE = "./img/image_01.jpg";
-const ACTIVE_IMAGE = "./img/image_02.jpg";
+// ============================================================================
+// 2. STATE MANAGEMENT
+// ============================================================================
 
-function connect() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log("Already connected!");
-    return;
-  }
+const State = {
+  ws: null,
+  heartbeatTimer: null,
+  reconnectTimer: null,
+  imageResetTimer: null,
+  isManualDisconnect: false,
+  connectionStartTime: null,
+  reconnectAttempts: 0,
 
-  console.log(`Connecting to ${WS_URL}...`);
-  updateStatusIndicator("connecting");
+  // UI Elements (cached)
+  displayImage: null,
+  statusIndicator: null,
+};
 
-  try {
-    ws = new WebSocket(WS_URL);
+// ============================================================================
+// 3. UTILITY FUNCTIONS
+// ============================================================================
 
-    ws.onopen = function (event) {
-      console.log("Connected to WebSocket server");
+/**
+ * Initialize DOM element references
+ */
+function initializeDOMElements() {
+  State.displayImage = document.getElementById("displayImage");
+  State.statusIndicator = document.getElementById("statusIndicator");
+}
 
-      // Reset reconnection attempts on successful connection
-      reconnectAttempts = 0;
-      connectionStartTime = Date.now();
+// ============================================================================
+// 4. UI CONTROLLER
+// ============================================================================
 
-      // Update status indicator
-      updateStatusIndicator("connected");
+const UIController = {
+  /**
+   * Updates connection status indicator
+   * @param {string} status - Status class (connecting, connected, disconnected)
+   */
+  updateStatusIndicator(status) {
+    if (!State.statusIndicator) return;
 
-      // Start heartbeat
-      startHeartbeat();
+    // Remove all status classes
+    State.statusIndicator.classList.remove(
+      "connected",
+      "connecting",
+      "disconnected"
+    );
 
-      // Announce presence metadata
-      announcePresence("playerStorm");
-    };
+    // Add the current status class
+    if (status) {
+      State.statusIndicator.classList.add(status);
+    }
+  },
 
-    // Handle server ping frames (automatic pong response)
-    ws.addEventListener("ping", () => {
-      console.log("Server ping received, pong sent automatically");
-    });
+  /**
+   * Switches to active image
+   */
+  showActiveImage() {
+    if (!State.displayImage) return;
 
-    ws.onmessage = function (event) {
-      try {
-        // Try to parse as JSON
-        const data = JSON.parse(event.data);
+    // Clear any existing timer
+    if (State.imageResetTimer) {
+      clearTimeout(State.imageResetTimer);
+      State.imageResetTimer = null;
+    }
 
-        // Handle different message types from server
-        if (data.type === "welcome") {
-          console.log(`Server welcome: ${data.message}`);
-        } else if (data.type === "broadcast") {
-          console.log(`Broadcast from ${data.from}:`, data.data);
+    // Switch to active image
+    State.displayImage.src = CONFIG.ACTIVE_IMAGE;
+    console.log(`Switched to active image: ${CONFIG.ACTIVE_IMAGE}`);
 
-          // Check if the broadcast data contains a "post" type message
-          if (data.data && data.data.type === "post") {
-            handlePostMessage(data.data);
-          }
-        } else if (data.type === "post") {
-          // Direct post message (not wrapped in broadcast)
-          handlePostMessage(data);
-        } else {
-          console.log("Received:", data);
+    // Schedule return to standby after configured duration
+    State.imageResetTimer = setTimeout(() => {
+      this.showStandbyImage();
+    }, CONFIG.ACTIVE_DISPLAY_DURATION);
+  },
+
+  /**
+   * Switches to standby image
+   */
+  showStandbyImage() {
+    if (!State.displayImage) return;
+
+    State.displayImage.src = CONFIG.STANDBY_IMAGE;
+    console.log(`Switched back to standby image: ${CONFIG.STANDBY_IMAGE}`);
+    State.imageResetTimer = null;
+  },
+};
+
+// ============================================================================
+// 5. WEBSOCKET MODULE
+// ============================================================================
+
+const WebSocketController = {
+  /**
+   * Establishes WebSocket connection
+   */
+  connect() {
+    if (State.ws && State.ws.readyState === WebSocket.OPEN) {
+      console.log("Already connected!");
+      return;
+    }
+
+    console.log(`Connecting to ${CONFIG.WS_URL}...`);
+    UIController.updateStatusIndicator("connecting");
+
+    try {
+      State.ws = new WebSocket(CONFIG.WS_URL);
+
+      State.ws.onopen = () => {
+        console.log("Connected to WebSocket server");
+
+        // Reset reconnection attempts on successful connection
+        State.reconnectAttempts = 0;
+        State.connectionStartTime = Date.now();
+
+        UIController.updateStatusIndicator("connected");
+        this.startHeartbeat();
+        this.announcePresence("playerStorm");
+      };
+
+      State.ws.addEventListener("ping", () => {
+        console.log("Server ping received, pong sent automatically");
+      });
+
+      State.ws.onmessage = (event) => {
+        this.handleMessage(event.data);
+      };
+
+      State.ws.onerror = (error) => {
+        console.error("WebSocket error occurred:", error);
+      };
+
+      State.ws.onclose = (event) => {
+        const reason = event.wasClean
+          ? "Connection closed cleanly"
+          : "Connection lost";
+        console.log(
+          `${reason} (Code: ${event.code}, Reason: ${
+            event.reason || "No reason provided"
+          })`
+        );
+
+        UIController.updateStatusIndicator("disconnected");
+        this.stopHeartbeat();
+
+        // Show connection time if it was established
+        if (State.connectionStartTime) {
+          const connectionDuration = Math.round(
+            (Date.now() - State.connectionStartTime) / 1000
+          );
+          console.log(`Connection lasted ${connectionDuration} seconds`);
         }
-      } catch (e) {
-        // If not JSON, log as plain text
-        console.log(`Received: ${event.data}`);
-      }
-    };
 
-    ws.onclose = function (event) {
-      const reason = event.wasClean
-        ? "Connection closed cleanly"
-        : "Connection lost";
-      console.log(
-        `${reason} (Code: ${event.code}, Reason: ${
-          event.reason || "No reason provided"
-        })`
-      );
-
-      // Update status indicator
-      updateStatusIndicator("disconnected");
-
-      // Stop heartbeat
-      stopHeartbeat();
-
-      // Show connection time if it was established
-      if (connectionStartTime) {
-        const connectionDuration = Math.round(
-          (Date.now() - connectionStartTime) / 1000
-        );
-        console.log(`Connection lasted ${connectionDuration} seconds`);
-      }
-
-      // Auto-reconnect if not manual disconnect and within attempt limit
-      if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        scheduleReconnect();
-      } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error(
-          "Maximum reconnection attempts reached. Please reconnect manually."
-        );
-      }
-    };
-
-    ws.onerror = function (error) {
-      console.error("WebSocket error occurred:", error);
-    };
-  } catch (error) {
-    console.error(`Failed to connect: ${error.message}`);
-  }
-}
-
-function announcePresence(role) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-  const announcement = {
-    type: "announce",
-    timestamp: new Date().toISOString(),
-    clientId: role,
-    userAgent: navigator.userAgent,
-    screen: {
-      width: window.screen?.width || null,
-      height: window.screen?.height || null,
-    },
-    pageVisibility: document.visibilityState,
-    location: { href: location.href },
-  };
-
-  try {
-    ws.send(JSON.stringify(announcement));
-    console.log("Announce sent:", announcement);
-  } catch (e) {
-    console.error("Failed to send announce:", e.message);
-  }
-}
-
-function disconnect() {
-  if (ws) {
-    isManualDisconnect = true;
-    stopHeartbeat();
-    clearTimeout(reconnectTimer);
-    ws.close(1000, "User initiated disconnect");
-    ws = null;
-    connectionStartTime = null;
-
-    // Reset manual disconnect flag after a delay
-    setTimeout(() => {
-      isManualDisconnect = false;
-    }, 1000);
-  }
-}
-
-function startHeartbeat() {
-  stopHeartbeat(); // Clear any existing heartbeat
-
-  // Send application-level keepalive messages
-  heartbeatTimer = setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        const keepAlive = JSON.stringify({
-          type: "keepalive",
-          timestamp: new Date().toISOString(),
-          clientId: "playerStorm",
-        });
-        ws.send(keepAlive);
-        console.log("Keepalive sent");
-      } catch (error) {
-        console.error(`Failed to send keepalive: ${error.message}`);
-      }
+        // Auto-reconnect if not manual disconnect and within attempt limit
+        if (
+          !State.isManualDisconnect &&
+          State.reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS
+        ) {
+          this.scheduleReconnect();
+        } else if (State.reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
+          console.error(
+            "Maximum reconnection attempts reached. Please reconnect manually."
+          );
+        }
+      };
+    } catch (error) {
+      console.error(`Failed to connect: ${error.message}`);
     }
-  }, HEARTBEAT_INTERVAL);
-}
+  },
 
-function stopHeartbeat() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-}
+  /**
+   * Handles incoming messages
+   * @param {string} rawData - Raw message data
+   */
+  handleMessage(rawData) {
+    try {
+      const data = JSON.parse(rawData);
 
-function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
-  reconnectAttempts++;
+      // Handle different message types from server
+      if (data.type === "welcome") {
+        console.log(`Server welcome: ${data.message}`);
+      } else if (data.type === "broadcast") {
+        console.log(`Broadcast from ${data.from}:`, data.data);
 
-  const delay = RECONNECT_DELAY * Math.min(reconnectAttempts, 5); // Exponential backoff, max 15s
-  console.log(
-    `Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${
-      delay / 1000
-    }s...`
-  );
-
-  reconnectTimer = setTimeout(() => {
-    if (!isManualDisconnect && reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
-      connect();
+        // Check if the broadcast data contains a "post" type message
+        if (data.data && data.data.type === "post") {
+          MessageHandler.handlePostMessage(data.data);
+        }
+      } else if (data.type === "post") {
+        // Direct post message (not wrapped in broadcast)
+        MessageHandler.handlePostMessage(data);
+      } else {
+        console.log("Received:", data);
+      }
+    } catch (e) {
+      // If not JSON, log as plain text
+      console.log(`Received: ${rawData}`);
     }
-  }, delay);
-}
+  },
 
-function handlePostMessage(data) {
-  console.log("Post message received:", data);
+  /**
+   * Announces presence to server
+   * @param {string} role - Client role identifier
+   */
+  announcePresence(role) {
+    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) return;
 
-  const displayImage = document.getElementById("displayImage");
-  if (!displayImage) {
-    console.error("Display image element not found");
-    return;
-  }
+    const announcement = {
+      type: "announce",
+      timestamp: new Date().toISOString(),
+      clientId: role,
+      userAgent: navigator.userAgent,
+      screen: {
+        width: window.screen?.width || null,
+        height: window.screen?.height || null,
+      },
+      pageVisibility: document.visibilityState,
+      location: { href: location.href },
+    };
 
-  // Clear any existing timer
-  if (imageResetTimer) {
-    clearTimeout(imageResetTimer);
-    imageResetTimer = null;
-  }
+    try {
+      State.ws.send(JSON.stringify(announcement));
+      console.log("Announce sent:", announcement);
+    } catch (e) {
+      console.error("Failed to send announce:", e.message);
+    }
+  },
 
-  // Switch to active image
-  displayImage.src = ACTIVE_IMAGE;
-  console.log(`Switched to active image: ${ACTIVE_IMAGE}`);
+  /**
+   * Starts heartbeat interval
+   */
+  startHeartbeat() {
+    this.stopHeartbeat(); // Clear any existing heartbeat
 
-  // Schedule return to standby after 10 seconds
-  imageResetTimer = setTimeout(() => {
-    displayImage.src = STANDBY_IMAGE;
-    console.log(`Switched back to standby image: ${STANDBY_IMAGE}`);
-    imageResetTimer = null;
-  }, ACTIVE_DISPLAY_DURATION);
-}
+    State.heartbeatTimer = setInterval(() => {
+      if (State.ws && State.ws.readyState === WebSocket.OPEN) {
+        try {
+          const keepAlive = JSON.stringify({
+            type: "keepalive",
+            timestamp: new Date().toISOString(),
+            clientId: "playerStorm",
+          });
+          State.ws.send(keepAlive);
+          console.log("Keepalive sent");
+        } catch (error) {
+          console.error(`Failed to send keepalive: ${error.message}`);
+        }
+      }
+    }, CONFIG.HEARTBEAT_INTERVAL);
+  },
 
-function updateStatusIndicator(status) {
-  const indicator = document.getElementById("statusIndicator");
-  if (!indicator) return;
+  /**
+   * Stops heartbeat interval
+   */
+  stopHeartbeat() {
+    if (State.heartbeatTimer) {
+      clearInterval(State.heartbeatTimer);
+      State.heartbeatTimer = null;
+    }
+  },
 
-  // Remove all status classes
-  indicator.classList.remove("connected", "connecting", "disconnected");
+  /**
+   * Schedules reconnection with exponential backoff
+   */
+  scheduleReconnect() {
+    clearTimeout(State.reconnectTimer);
+    State.reconnectAttempts++;
 
-  // Add the current status class
-  if (status) {
-    indicator.classList.add(status);
-  }
-}
+    const delay = CONFIG.RECONNECT_DELAY * Math.min(State.reconnectAttempts, 5);
+    console.log(
+      `Reconnection attempt ${State.reconnectAttempts}/${
+        CONFIG.MAX_RECONNECT_ATTEMPTS
+      } in ${delay / 1000}s...`
+    );
 
-// BroadSignPlay function that also connects to WebSocket
+    State.reconnectTimer = setTimeout(() => {
+      if (
+        !State.isManualDisconnect &&
+        State.reconnectAttempts <= CONFIG.MAX_RECONNECT_ATTEMPTS
+      ) {
+        this.connect();
+      }
+    }, delay);
+  },
+
+  /**
+   * Manually disconnects WebSocket
+   */
+  disconnect() {
+    if (State.ws) {
+      State.isManualDisconnect = true;
+      this.stopHeartbeat();
+      clearTimeout(State.reconnectTimer);
+      State.ws.close(1000, "User initiated disconnect");
+      State.ws = null;
+      State.connectionStartTime = null;
+
+      // Reset manual disconnect flag after a delay
+      setTimeout(() => {
+        State.isManualDisconnect = false;
+      }, 1000);
+    }
+  },
+};
+
+// ============================================================================
+// 6. MESSAGE HANDLER
+// ============================================================================
+
+const MessageHandler = {
+  /**
+   * Handles post-type messages
+   * @param {object} data - Post message data
+   */
+  handlePostMessage(data) {
+    console.log("Post message received:", data);
+
+    if (!State.displayImage) {
+      console.error("Display image element not found");
+      return;
+    }
+
+    // Switch to active image
+    UIController.showActiveImage();
+  },
+};
+
+// ============================================================================
+// 7. PUBLIC API
+// ============================================================================
+
+/**
+ * BroadSignPlay function that also connects to WebSocket
+ */
 function BroadSignPlay() {
   console.log("BroadSignPlay() called - initiating WebSocket connection");
-  isManualDisconnect = false;
-  reconnectAttempts = 0;
-  connect();
+  State.isManualDisconnect = false;
+  State.reconnectAttempts = 0;
+  WebSocketController.connect();
 }
 
-// Auto-connect on page load
+/**
+ * Manually disconnect from WebSocket
+ */
+function disconnect() {
+  WebSocketController.disconnect();
+}
+
+// ============================================================================
+// 8. INITIALIZATION
+// ============================================================================
+
+/**
+ * Initialize application on page load
+ */
 window.addEventListener("load", () => {
+  initializeDOMElements();
   console.log("Page loaded - auto-connecting to WebSocket");
   BroadSignPlay();
 });
+
+// Expose public functions to window
+window.BroadSignPlay = BroadSignPlay;
+window.disconnect = disconnect;
