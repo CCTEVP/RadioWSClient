@@ -1,0 +1,191 @@
+/* Base styles - optimized for 382x720 centered display */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #222; /* Dark background around centered content */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Container to constrain and center the display to 382x720 */
+.display-container {
+  position: relative;
+  width: 382px;
+  height: 720px;
+  max-width: 382px;
+  max-height: 720px;
+  overflow: hidden;
+  background-color: #000;
+}
+
+/* Main display image fills the container */
+#displayImage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.3s ease-in-out;
+  z-index: 1;
+}
+
+#displayImage.fade {
+  opacity: 0.5;
+}
+
+/* Now Playing container in bottom center (optimized for 382x720) */
+.now-playing-container {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  font-family: Arial, sans-serif;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 10px 16px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  min-width: 200px;
+  max-width: 90%; /* 90% of 382px container = ~344px */
+  text-align: center;
+  opacity: 1;
+  transition: opacity 0.5s ease-out;
+}
+
+.now-playing-container.fade-out {
+  opacity: 0;
+}
+
+.now-playing-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #bbbbbb;
+  margin-bottom: 4px;
+}
+
+.now-playing-content {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.2;
+  word-wrap: break-word;
+}
+
+.now-playing-advertiser {
+  font-size: 11px;
+  font-weight: 400;
+  color: #cccccc;
+  line-height: 1.2;
+  word-wrap: break-word;
+  margin-top: 2px;
+}
+
+/* WebSocket connectivity dot (red) - compact size for 382x720 */
+#wsDot {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #e53935;
+  box-shadow: 0 0 4px #e53935cc;
+  z-index: 9999;
+  transition: opacity 0.3s;
+  opacity: 1;
+}
+
+/* Blue dot for CustomPOP status - compact size for 382x720 */
+#customPopDot {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2196f3;
+  box-shadow: 0 0 4px #2196f3cc;
+  z-index: 9999;
+  transition: opacity 0.3s;
+  opacity: 1;
+}
+
+/* Overlay container positioned top-right - optimized for 382x720 */
+/* 10 squares × 16px + 9 gaps × 2px = 178px (fits in half screen: 191px) */
+.square-overlay {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 9999;
+  pointer-events: none; /* Click-through; remove if interaction needed */
+  font-family: Arial, sans-serif;
+  max-width: 192px; /* Half of 384px screen width */
+}
+
+.squares {
+  display: flex;
+  gap: 2px; /* minimal space between squares */
+}
+
+.square {
+  width: 16px;
+  height: 16px;
+  border: 1px solid #fff;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 1px;
+  transition: background 0.25s, transform 0.25s, box-shadow 0.25s;
+}
+
+.square.active {
+  background: #1e90ff; /* DodgerBlue */
+  box-shadow: 0 0 6px rgba(30, 144, 255, 0.9);
+}
+
+/* Optional pulse effect when newly activated */
+.square.pulse {
+  animation: pulse 0.8s ease-out;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Progress bar at bottom of container */
+.progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: transparent;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #00ff00; /* Green */
+  transition: width linear;
+}

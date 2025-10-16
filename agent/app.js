@@ -8,7 +8,14 @@
 // ============================================================================
 
 const CONFIG = {
-  WS_URL: "wss://radiowsserver-763503917257.europe-west1.run.app/",
+  WS_URL_BASE:
+    "wss://radiowsserver-763503917257.europe-west1.run.app/room/radio",
+  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  AUTH_TOKEN:
+    "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
+  get WS_URL() {
+    return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
+  },
   LOCAL_WS_URL: "ws://localhost:2326",
   RADIO_CONTENT_PAYLOAD: {
     rc: {
@@ -56,17 +63,21 @@ function initializeDOMElements() {
 
 const Logger = {
   /**
-   * Logs a message to the UI
+   * Logs a message to the UI and console
    * @param {string} message - Log message
    * @param {string} type - Log type (info, error, received, sent, local-received)
    */
   log(message, type = "info") {
+    // Always log to console
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] [${type}] ${message}`);
+
+    // Also log to UI if element exists
     if (!State.logsEl) return;
 
     const logEntry = document.createElement("div");
     logEntry.className = `log-entry ${type}`;
 
-    const timestamp = new Date().toLocaleTimeString();
     logEntry.innerHTML = `
       <span class="timestamp">[${timestamp}]</span> ${message}
     `;

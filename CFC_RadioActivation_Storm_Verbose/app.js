@@ -1,6 +1,6 @@
 // ============================================================================
-// RADIO WEBSOCKET CLIENT - PLAYER
-// Handles radio content synchronization via WebSocket and sends custom POPs
+// RADIO WEBSOCKET CLIENT - CFC STORM RADIO
+// Combined: Image switcher + Overlay features (dots, logs, squares, progress)
 // ============================================================================
 
 // ============================================================================
@@ -26,6 +26,11 @@ const CONFIG = {
   LOGGER_FADE_DURATION: 1000, // ms
   NOW_PLAYING_DURATION: 10000, // ms
   NOW_PLAYING_FADE_DURATION: 500, // ms
+
+  // Image switching (from playerStorm)
+  ACTIVE_DISPLAY_DURATION: 10000, // 10 seconds
+  STANDBY_IMAGE: "./img/image_01.jpg",
+  ACTIVE_IMAGE: "./img/image_02.jpg",
 };
 
 // ============================================================================
@@ -59,15 +64,14 @@ const State = {
   // Timers
   customPopTimer: null,
   nowPlayingTimeout: null,
-  loggerTimeout: null,
+  imageResetTimer: null, // From playerStorm
 
   // UI Elements (cached)
   progressBarFill: null,
-  loggerElement: null,
-  loggerContainer: null,
   squaresContainer: null,
   squares: [],
   wsDot: null,
+  displayImage: null, // From playerStorm
 };
 
 // ============================================================================
@@ -128,82 +132,33 @@ function initializeDOMElements() {
     ? Array.from(State.squaresContainer.querySelectorAll(".square"))
     : [];
   State.wsDot = document.getElementById("wsDot");
+  State.displayImage = document.getElementById("displayImage"); // From playerStorm
 }
 
 // ============================================================================
-// 4. LOGGER MODULE
+// 4. LOGGER MODULE (Console only - no visual logger for compact display)
 // ============================================================================
 
 const Logger = {
   /**
-   * Logs a message to the visual logger and console
+   * Logs a message to console only (visual logger disabled for 384x720 display)
    * @param {string} message - Log message
    * @param {*} data - Optional data to log
    */
   log(message, data = null) {
-    // Initialize logger elements if not already done
-    if (!State.loggerElement) {
-      State.loggerElement = document.getElementById("logger");
-      State.loggerContainer = document.getElementById("loggerContainer");
-    }
-
-    if (!State.loggerElement || !State.loggerContainer) return;
-
     // Format message with timestamp
     const timestamp = new Date().toISOString().split("T")[1].substring(0, 12);
     let logMessage = `[${timestamp}] ${message}`;
 
     if (data !== null) {
       if (typeof data === "object") {
-        logMessage += " " + JSON.stringify(data);
+        console.log(logMessage, data);
       } else {
-        logMessage += " " + data;
+        console.log(logMessage, data);
       }
+    } else {
+      console.log(logMessage);
     }
-
-    // Add to textarea
-    State.loggerElement.value += logMessage + "\n";
-    State.loggerElement.scrollTop = State.loggerElement.scrollHeight;
-
-    // Also log to console for debugging
-    console.log(message, data !== null ? data : "");
-
-    this.show();
-  },
-
-  /**
-   * Shows the logger with fade-in animation
-   */
-  show() {
-    if (!State.loggerContainer) return;
-
-    State.loggerContainer.style.display = "block";
-    // Force reflow
-    void State.loggerContainer.offsetWidth;
-    State.loggerContainer.classList.add("show");
-
-    // Clear existing timeout
-    if (State.loggerTimeout) {
-      clearTimeout(State.loggerTimeout);
-    }
-
-    // Hide after configured duration
-    State.loggerTimeout = setTimeout(() => {
-      this.hide();
-    }, CONFIG.LOGGER_VISIBLE_DURATION);
-  },
-
-  /**
-   * Hides the logger with fade-out animation
-   */
-  hide() {
-    if (!State.loggerContainer) return;
-
-    State.loggerContainer.classList.remove("show");
-    // Wait for fade out transition to complete
-    setTimeout(() => {
-      State.loggerContainer.style.display = "none";
-    }, CONFIG.LOGGER_FADE_DURATION);
   },
 };
 
@@ -339,6 +294,38 @@ const UIController = {
       Logger.log("[UI] Active square cleared");
     },
   },
+
+  // Image Switcher (from playerStorm)
+  images: {
+    showActiveImage() {
+      if (!State.displayImage) return;
+
+      // Clear any existing timer
+      if (State.imageResetTimer) {
+        clearTimeout(State.imageResetTimer);
+        State.imageResetTimer = null;
+      }
+
+      // Switch to active image
+      State.displayImage.src = CONFIG.ACTIVE_IMAGE;
+      Logger.log(`[IMAGE] Switched to active image: ${CONFIG.ACTIVE_IMAGE}`);
+
+      // Schedule return to standby after configured duration
+      State.imageResetTimer = setTimeout(() => {
+        this.showStandbyImage();
+      }, CONFIG.ACTIVE_DISPLAY_DURATION);
+    },
+
+    showStandbyImage() {
+      if (!State.displayImage) return;
+
+      State.displayImage.src = CONFIG.STANDBY_IMAGE;
+      Logger.log(
+        `[IMAGE] Switched back to standby image: ${CONFIG.STANDBY_IMAGE}`
+      );
+      State.imageResetTimer = null;
+    },
+  },
 };
 
 // ============================================================================
@@ -371,7 +358,7 @@ const WebSocketController = {
         State.connectionStartTime = Date.now();
 
         this.startHeartbeat();
-        this.announcePresence("player");
+        this.announcePresence("cfc_storm_radio");
       };
 
       State.ws.addEventListener("ping", () => {
@@ -480,7 +467,7 @@ const WebSocketController = {
           const keepAlive = JSON.stringify({
             type: "keepalive",
             timestamp: new Date().toISOString(),
-            clientId: "player",
+            clientId: "cfc_storm_radio",
           });
           State.ws.send(keepAlive);
           Logger.log("[WS] Keepalive sent");
@@ -742,10 +729,11 @@ const MessageHandler = {
       contentName: State.contentName,
     });
 
-    // Update UI
+    // Update UI: Switch image, highlight square, show now playing
     Logger.log(
       `[WS] Highlighting square for advertiser ID (post): ${advertiserIdValue}`
     );
+    UIController.images.showActiveImage(); // From playerStorm
     UIController.squares.highlight(advertiserIdValue);
     UIController.nowPlaying.update(State.contentName, State.advertiserName);
   },
@@ -813,7 +801,7 @@ function BroadSignPlay() {
 window.addEventListener("load", () => {
   initializeBroadSignConfig();
   initializeDOMElements();
-  Logger.log("[INIT] Page loaded - auto-connecting to WebSocket");
+  Logger.log("[INIT] CFC Storm Radio loaded - auto-connecting to WebSocket");
   BroadSignPlay();
 });
 

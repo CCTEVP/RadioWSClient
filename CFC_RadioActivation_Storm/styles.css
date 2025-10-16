@@ -8,13 +8,27 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #000;
+  background-color: #222; /* Dark background around centered content */
   display: flex;
   justify-content: center;
   align-items: center;
 }
 
+/* Container to constrain and center the display to 382x720 */
+.display-container {
+  position: relative;
+  width: 382px;
+  height: 720px;
+  max-width: 382px;
+  max-height: 720px;
+  overflow: hidden;
+  background-color: #000;
+}
+
 #displayImage {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -25,7 +39,7 @@ body {
   opacity: 0.5;
 }
 
-/* Connection status indicator - lower left corner, hidden when connected */
+/* Connection status indicator - lower left corner, positioned within container */
 #statusIndicator {
   position: absolute;
   bottom: 10px;

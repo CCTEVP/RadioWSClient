@@ -7,11 +7,14 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <!-- Main display image -->
-    <img id="displayImage" src="./img/image_01.jpg" alt="Display" />
+    <!-- Container to center and constrain to 382x720 -->
+    <div class="display-container">
+      <!-- Main display image -->
+      <img id="displayImage" src="./img/image_01.jpg" alt="Display" />
 
-    <!-- Optional connection status indicator -->
-    <div id="statusIndicator"></div>
+      <!-- Optional connection status indicator -->
+      <div id="statusIndicator"></div>
+    </div>
 
     <!-- WebSocket connection script -->
     <script src="./app.js"></script>
