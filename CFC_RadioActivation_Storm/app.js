@@ -14,7 +14,7 @@ const CONFIG = {
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
   get WS_URL() {
-    return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
+    return buildWebSocketUrl();
   },
 
   HEARTBEAT_INTERVAL: 30000, // 30 seconds
@@ -38,6 +38,12 @@ const State = {
   connectionStartTime: null,
   reconnectAttempts: 0,
 
+  // BroadSign identifiers
+  frameId: null,
+  adCopyId: null,
+  playerId: null,
+  expectedSlotDurationMs: null,
+
   // UI Elements (cached)
   displayImage: null,
   statusIndicator: null,
@@ -46,6 +52,68 @@ const State = {
 // ============================================================================
 // 3. UTILITY FUNCTIONS
 // ============================================================================
+
+/**
+ * Safely retrieves a property from BroadSignObject with fallback
+ */
+function getBroadSignProperty(propName, defaultValue) {
+  if (
+    typeof window.BroadSignObject === "object" &&
+    window.BroadSignObject !== null &&
+    Object.prototype.hasOwnProperty.call(window.BroadSignObject, propName)
+  ) {
+    const value = window.BroadSignObject[propName];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed !== "") return trimmed;
+    } else if (value !== null && value !== undefined) {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
+/**
+ * Initializes BroadSign-related configuration values
+ */
+function initializeBroadSignConfig() {
+  State.frameId = getBroadSignProperty("frame_id", "12343");
+  State.adCopyId = getBroadSignProperty("ad_copy_id", "1290113894");
+  State.playerId = getBroadSignProperty("player_id", "759244535");
+
+  const expectedDuration = getBroadSignProperty(
+    "expected_slot_duration_ms",
+    "10000"
+  );
+  State.expectedSlotDurationMs = expectedDuration;
+}
+
+/**
+ * Builds a WebSocket URL including BroadSign identifiers
+ */
+function buildWebSocketUrl() {
+  const params = new URLSearchParams({ token: CONFIG.AUTH_TOKEN });
+
+  const normalize = (value) => {
+    if (value === null || value === undefined) return null;
+    const trimmed = String(value).trim();
+    return trimmed === "" ? null : trimmed;
+  };
+
+  const append = (key, value) => {
+    const normalized = normalize(value);
+    if (normalized !== null) {
+      params.set(key, normalized);
+    }
+  };
+
+  append("frameId", State.frameId);
+  append("playerId", State.playerId);
+  append("adCopyId", State.adCopyId);
+  append("expectedSlotDurationMs", normalize(State.expectedSlotDurationMs));
+
+  return `${CONFIG.WS_URL_BASE}?${params.toString()}`;
+}
 
 /**
  * Initialize DOM element references
@@ -87,6 +155,7 @@ const UIController = {
     if (!State.displayImage) return;
 
     // Clear any existing timer
+    const hadActiveTimer = Boolean(State.imageResetTimer);
     if (State.imageResetTimer) {
       clearTimeout(State.imageResetTimer);
       State.imageResetTimer = null;
@@ -95,6 +164,9 @@ const UIController = {
     // Switch to active image
     State.displayImage.src = CONFIG.ACTIVE_IMAGE;
     console.log(`Switched to active image: ${CONFIG.ACTIVE_IMAGE}`);
+    if (hadActiveTimer) {
+      console.log("Active image timer restarted due to new message");
+    }
 
     // Schedule return to standby after configured duration
     State.imageResetTimer = setTimeout(() => {
@@ -128,11 +200,12 @@ const WebSocketController = {
       return;
     }
 
-    console.log(`Connecting to ${CONFIG.WS_URL}...`);
+    const wsUrl = CONFIG.WS_URL;
+    console.log(`Connecting to ${wsUrl}...`);
     UIController.updateStatusIndicator("connecting");
 
     try {
-      State.ws = new WebSocket(CONFIG.WS_URL);
+      State.ws = new WebSocket(wsUrl);
 
       State.ws.onopen = () => {
         console.log("Connected to WebSocket server");
@@ -382,6 +455,7 @@ function disconnect() {
  * Initialize application on page load
  */
 window.addEventListener("load", () => {
+  initializeBroadSignConfig();
   initializeDOMElements();
   console.log("Page loaded - auto-connecting to WebSocket");
   BroadSignPlay();

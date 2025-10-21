@@ -10,17 +10,16 @@
     <div class="container">
       <h1>WebSocket Client</h1>
       <h2>Dynamic Campaigns</h2>
-
-      <div id="status" class="status disconnected">Disconnected</div>
-
-      <div class="controls">
-        <button id="connectBtn" onclick="connect()">Connect</button>
-        <button id="disconnectBtn" onclick="disconnect()" disabled>
-          Disconnect
-        </button>
-        <button class="clear-logs" onclick="clearLogs()">Clear Logs</button>
+      <div class="status-section">
+        <div id="status" class="status disconnected">Disconnected</div>
+        <div class="controls">
+          <button id="connectBtn" onclick="connect()">Connect</button>
+          <button id="disconnectBtn" onclick="disconnect()" disabled>
+            Disconnect
+          </button>
+          <button class="clear-logs" onclick="clearLogs()">Clear Logs</button>
+        </div>
       </div>
-
       <div class="message-section">
         <h3>Send JSON Message</h3>
         <textarea id="messageInput" placeholder="Enter JSON message here...">
@@ -28,7 +27,7 @@
           "type": "post",
           "timestamp": "2025-10-02T00:00:00Z",
           "data": {
-            "content": { "id": "6564", "name": "Marvel Thunderbolts" },
+            "content": { "id": "6564", "name": "Marvel Thunderbolts", "type":"Control","duration":"10" },
             "advertiser": { "id": "3", "name": "Total Radio" }
           }
         }

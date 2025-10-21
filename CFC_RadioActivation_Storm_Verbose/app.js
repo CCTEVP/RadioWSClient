@@ -14,7 +14,7 @@ const CONFIG = {
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
   get WS_URL() {
-    return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
+    return buildWebSocketUrl();
   },
 
   LOCAL_WS_URL: "ws://localhost:2326",
@@ -43,6 +43,7 @@ const State = {
   adCopyId: null,
   playerId: null,
   slotDuration: null,
+  expectedSlotDurationMs: null,
   customPopTimeout: null,
 
   // WebSocket States
@@ -58,12 +59,15 @@ const State = {
   messagesReceived: [{ result: "No messages received" }],
   contentId: null,
   contentName: null,
+  contentType: null,
+  contentDuration: null,
   advertiserId: null,
   advertiserName: null,
 
   // Timers
   customPopTimer: null,
   nowPlayingTimeout: null,
+  nowPlayingHideTimeout: null,
   imageResetTimer: null, // From playerStorm
 
   // UI Elements (cached)
@@ -73,6 +77,36 @@ const State = {
   wsDot: null,
   displayImage: null, // From playerStorm
 };
+
+/**
+ * Builds a WebSocket URL with all BroadSign identifiers as query parameters
+ */
+function buildWebSocketUrl() {
+  const params = new URLSearchParams({ token: CONFIG.AUTH_TOKEN });
+
+  const normalize = (value) => {
+    if (value === null || value === undefined) return null;
+    const trimmed = String(value).trim();
+    return trimmed === "" ? null : trimmed;
+  };
+
+  const append = (key, value) => {
+    const normalized = normalize(value);
+    if (normalized !== null) {
+      params.set(key, normalized);
+    }
+  };
+
+  append("frameId", State.frameId);
+  append("playerId", State.playerId);
+  append("adCopyId", State.adCopyId);
+  append(
+    "expectedSlotDurationMs",
+    normalize(State.expectedSlotDurationMs) ?? normalize(State.slotDuration)
+  );
+
+  return `${CONFIG.WS_URL_BASE}?${params.toString()}`;
+}
 
 // ============================================================================
 // 3. UTILITY FUNCTIONS
@@ -111,10 +145,12 @@ function initializeBroadSignConfig() {
   State.frameId = getBroadSignProperty("frame_id", "12343");
   State.adCopyId = getBroadSignProperty("ad_copy_id", "1290113894");
   State.playerId = getBroadSignProperty("player_id", "759244535");
-  State.slotDuration = parseInt(
-    getBroadSignProperty("expected_slot_duration_ms", "10000"),
-    10
+  const expectedDuration = getBroadSignProperty(
+    "expected_slot_duration_ms",
+    "10000"
   );
+  State.expectedSlotDurationMs = expectedDuration;
+  State.slotDuration = parseInt(expectedDuration, 10);
   State.customPopTimeout = State.slotDuration - CONFIG.CUSTOM_POP_OFFSET;
 
   Logger.log(`[INIT] Slot duration set to ${State.slotDuration}ms`);
@@ -225,20 +261,41 @@ const UIController = {
 
   // Now Playing Display
   nowPlaying: {
-    update(content, advertiser) {
+    update(
+      contentId,
+      contentName,
+      contentType,
+      contentDuration,
+      advertiserId,
+      advertiserName
+    ) {
       const contentElement = document.getElementById("nowPlayingContent");
+      const contentDetailsElement = document.getElementById(
+        "nowPlayingContentDetails"
+      );
       const advertiserElement = document.getElementById("nowPlayingAdvertiser");
       const container = document.getElementById("nowPlayingContainer");
 
-      if (!contentElement || !content) return;
+      if (!contentElement || !contentName) return;
 
-      contentElement.textContent = content;
-      advertiserElement.textContent = advertiser;
+      contentElement.textContent = contentName;
+      contentDetailsElement.textContent =
+        contentType + " • " + (contentDuration ? contentDuration + "s" : "");
+      advertiserElement.textContent =
+        advertiserName + " (#" + advertiserId + ")";
 
       if (container) {
-        // Clear any existing timeout
+        const hadExistingTimeout =
+          Boolean(State.nowPlayingTimeout) ||
+          Boolean(State.nowPlayingHideTimeout);
+
         if (State.nowPlayingTimeout) {
           clearTimeout(State.nowPlayingTimeout);
+          State.nowPlayingTimeout = null;
+        }
+        if (State.nowPlayingHideTimeout) {
+          clearTimeout(State.nowPlayingHideTimeout);
+          State.nowPlayingHideTimeout = null;
         }
 
         // Show the container and remove fade-out class
@@ -247,19 +304,32 @@ const UIController = {
 
         // Schedule fade-out after configured duration
         State.nowPlayingTimeout = setTimeout(() => {
+          State.nowPlayingTimeout = null;
           container.classList.add("fade-out");
 
           // Restore square appearance at the same time as fade-out starts
           UIController.squares.clearActive();
 
           // Hide completely after transition completes
-          setTimeout(() => {
+          State.nowPlayingHideTimeout = setTimeout(() => {
             container.style.display = "none";
+            State.nowPlayingHideTimeout = null;
           }, CONFIG.NOW_PLAYING_FADE_DURATION);
         }, CONFIG.NOW_PLAYING_DURATION);
+
+        if (hadExistingTimeout) {
+          Logger.log("[UI] Now Playing timer restarted due to new message");
+        }
       }
 
-      Logger.log("[UI] Now Playing updated:", { content, advertiser });
+      Logger.log("[UI] Now Playing updated:", {
+        contentId,
+        contentName,
+        contentType,
+        contentDuration,
+        advertiserId,
+        advertiserName,
+      });
     },
   },
 
@@ -301,6 +371,7 @@ const UIController = {
       if (!State.displayImage) return;
 
       // Clear any existing timer
+      const hadActiveTimer = Boolean(State.imageResetTimer);
       if (State.imageResetTimer) {
         clearTimeout(State.imageResetTimer);
         State.imageResetTimer = null;
@@ -309,6 +380,9 @@ const UIController = {
       // Switch to active image
       State.displayImage.src = CONFIG.ACTIVE_IMAGE;
       Logger.log(`[IMAGE] Switched to active image: ${CONFIG.ACTIVE_IMAGE}`);
+      if (hadActiveTimer) {
+        Logger.log("[IMAGE] Active image timer restarted due to new message");
+      }
 
       // Schedule return to standby after configured duration
       State.imageResetTimer = setTimeout(() => {
@@ -346,7 +420,9 @@ const WebSocketController = {
     }
 
     try {
-      State.ws = new WebSocket(CONFIG.WS_URL);
+      const wsUrl = buildWebSocketUrl();
+      Logger.log("[WS] Connecting to", wsUrl);
+      State.ws = new WebSocket(wsUrl);
 
       State.ws.onopen = () => {
         clearTimeout(State.reconnectTimer);
@@ -721,12 +797,16 @@ const MessageHandler = {
     State.advertiserName = core.advertiser.name;
     State.contentId = core.content.id;
     State.contentName = core.content.name;
+    State.contentType = core.content.type;
+    State.contentDuration = core.content.duration;
 
     Logger.log("[WS] Post data updated:", {
       advertiserId: State.advertiserId,
       advertiserName: State.advertiserName,
       contentId: State.contentId,
       contentName: State.contentName,
+      contentType: State.contentType,
+      contentDuration: State.contentDuration,
     });
 
     // Update UI: Switch image, highlight square, show now playing
@@ -735,7 +815,14 @@ const MessageHandler = {
     );
     UIController.images.showActiveImage(); // From playerStorm
     UIController.squares.highlight(advertiserIdValue);
-    UIController.nowPlaying.update(State.contentName, State.advertiserName);
+    UIController.nowPlaying.update(
+      State.contentId,
+      State.contentName,
+      State.contentType,
+      State.contentDuration,
+      State.advertiserId,
+      State.advertiserName
+    );
   },
 
   /**
