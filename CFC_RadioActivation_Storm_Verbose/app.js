@@ -42,6 +42,7 @@ const State = {
   frameId: null,
   adCopyId: null,
   playerId: null,
+  broadcastDelay: null,
   slotDuration: null,
   expectedSlotDurationMs: null,
   customPopTimeout: null,
@@ -104,6 +105,7 @@ function buildWebSocketUrl() {
     "expectedSlotDurationMs",
     normalize(State.expectedSlotDurationMs) ?? normalize(State.slotDuration)
   );
+  append("broadcastDelay", normalize(State.broadcastDelay));
 
   return `${CONFIG.WS_URL_BASE}?${params.toString()}`;
 }
@@ -142,9 +144,10 @@ function getBroadSignProperty(propName, defaultValue) {
  * Initialize BroadSign configuration from BroadSignObject
  */
 function initializeBroadSignConfig() {
-  State.frameId = getBroadSignProperty("frame_id", "12343");
-  State.adCopyId = getBroadSignProperty("ad_copy_id", "1290113894");
-  State.playerId = getBroadSignProperty("player_id", "759244535");
+  State.frameId = getBroadSignProperty("frame_id", "333333333");
+  State.adCopyId = getBroadSignProperty("ad_copy_id", "333333333");
+  State.playerId = getBroadSignProperty("player_id", "333333333");
+  State.broadcastDelay = getBroadSignProperty("broadcast_delay", "0");
   const expectedDuration = getBroadSignProperty(
     "expected_slot_duration_ms",
     "10000"

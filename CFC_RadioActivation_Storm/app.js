@@ -77,9 +77,10 @@ function getBroadSignProperty(propName, defaultValue) {
  * Initializes BroadSign-related configuration values
  */
 function initializeBroadSignConfig() {
-  State.frameId = getBroadSignProperty("frame_id", "12343");
-  State.adCopyId = getBroadSignProperty("ad_copy_id", "1290113894");
-  State.playerId = getBroadSignProperty("player_id", "759244535");
+  State.frameId = getBroadSignProperty("frame_id", "222222222");
+  State.adCopyId = getBroadSignProperty("ad_copy_id", "222222222");
+  State.playerId = getBroadSignProperty("player_id", "222222222");
+  State.broadcastDelay = getBroadSignProperty("broadcast_delay", "0");
 
   const expectedDuration = getBroadSignProperty(
     "expected_slot_duration_ms",
@@ -111,6 +112,7 @@ function buildWebSocketUrl() {
   append("playerId", State.playerId);
   append("adCopyId", State.adCopyId);
   append("expectedSlotDurationMs", normalize(State.expectedSlotDurationMs));
+  append("broadcastDelay", normalize(State.broadcastDelay));
 
   return `${CONFIG.WS_URL_BASE}?${params.toString()}`;
 }
