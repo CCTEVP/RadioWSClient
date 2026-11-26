@@ -205,7 +205,16 @@ const Logger = {
     // Add to textarea, dropping the oldest lines once the cap is exceeded
     const el = State.loggerElement;
     el.value += logMessage + "\n";
-    State.loggerLineCount = (State.loggerLineCount || 0) + 1;
+    // Count every line this entry adds, including newlines embedded in data
+    let addedLines = 1;
+    for (
+      let i = logMessage.indexOf("\n");
+      i !== -1;
+      i = logMessage.indexOf("\n", i + 1)
+    ) {
+      addedLines++;
+    }
+    State.loggerLineCount = (State.loggerLineCount || 0) + addedLines;
     if (State.loggerLineCount > CONFIG.LOGGER_MAX_LINES) {
       const excess = State.loggerLineCount - CONFIG.LOGGER_MAX_LINES;
       let cut = 0;
