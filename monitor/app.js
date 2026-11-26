@@ -17,8 +17,9 @@ const CONFIG = {
     return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
   },
   HEARTBEAT_INTERVAL: 30000, // 30 seconds
-  RECONNECT_DELAY: 3000, // 3 seconds
-  MAX_RECONNECT_ATTEMPTS: 20, // Allow reconnection for ~1 hour
+  RECONNECT_DELAY: 3000, // 3 seconds (grows to 15s over the first attempts)
+  MAX_RECONNECT_ATTEMPTS: 20, // Fast retries (~4.5 minutes total)
+  SLOW_RECONNECT_DELAY: 60000, // After fast retries, keep trying every 60s
 };
 
 // ============================================================================
@@ -213,17 +214,11 @@ const WebSocketController = {
         UIController.updateStatus("disconnected", "Disconnected");
         UIController.updateButtons(false);
 
-        // Auto-reconnect if not manual disconnect and within attempt limit
-        if (
-          !State.isManualDisconnect &&
-          State.reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS
-        ) {
+        // Auto-reconnect unless the user disconnected manually. After the fast
+        // retries are used up, keep retrying slowly instead of giving up, so
+        // an outage longer than a few minutes still recovers on its own.
+        if (!State.isManualDisconnect) {
           this.scheduleReconnect();
-        } else if (State.reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-          Logger.log(
-            "Maximum reconnection attempts reached. Please reconnect manually.",
-            "error"
-          );
         }
       };
     } catch (error) {
@@ -356,23 +351,30 @@ const WebSocketController = {
     clearTimeout(State.reconnectTimer);
     State.reconnectAttempts++;
 
-    const delay = CONFIG.RECONNECT_DELAY * Math.min(State.reconnectAttempts, 5);
+    const fastPhase = State.reconnectAttempts <= CONFIG.MAX_RECONNECT_ATTEMPTS;
+    const delay = fastPhase
+      ? CONFIG.RECONNECT_DELAY * Math.min(State.reconnectAttempts, 5)
+      : CONFIG.SLOW_RECONNECT_DELAY;
+    const attemptLabel = fastPhase
+      ? `${State.reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`
+      : `${State.reconnectAttempts}, slow retry`;
+
+    if (State.reconnectAttempts === CONFIG.MAX_RECONNECT_ATTEMPTS + 1) {
+      Logger.log(
+        `Fast reconnection attempts used up; retrying every ${
+          CONFIG.SLOW_RECONNECT_DELAY / 1000
+        }s`,
+        "error"
+      );
+    }
     Logger.log(
-      `Reconnection attempt ${State.reconnectAttempts}/${
-        CONFIG.MAX_RECONNECT_ATTEMPTS
-      } in ${delay / 1000}s...`,
+      `Reconnection attempt ${attemptLabel} in ${delay / 1000}s...`,
       "info"
     );
-    UIController.updateStatus(
-      "connecting",
-      `Reconnecting... (${State.reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS})`
-    );
+    UIController.updateStatus("connecting", `Reconnecting... (${attemptLabel})`);
 
     State.reconnectTimer = setTimeout(() => {
-      if (
-        !State.isManualDisconnect &&
-        State.reconnectAttempts <= CONFIG.MAX_RECONNECT_ATTEMPTS
-      ) {
+      if (!State.isManualDisconnect) {
         this.connect();
       }
     }, delay);
