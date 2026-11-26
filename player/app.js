@@ -24,6 +24,7 @@ const CONFIG = {
   CUSTOM_POP_OFFSET: 3000, // Send POP 3000ms before slot ends
   LOGGER_VISIBLE_DURATION: 5000, // ms
   LOGGER_FADE_DURATION: 1000, // ms
+  LOGGER_MAX_LINES: 500, // cap on-screen log lines so long-running players don't grow unbounded
   NOW_PLAYING_DURATION: 10000, // ms
   NOW_PLAYING_FADE_DURATION: 500, // ms
 };
@@ -201,9 +202,22 @@ const Logger = {
       }
     }
 
-    // Add to textarea
-    State.loggerElement.value += logMessage + "\n";
-    State.loggerElement.scrollTop = State.loggerElement.scrollHeight;
+    // Add to textarea, dropping the oldest lines once the cap is exceeded
+    const el = State.loggerElement;
+    el.value += logMessage + "\n";
+    State.loggerLineCount = (State.loggerLineCount || 0) + 1;
+    if (State.loggerLineCount > CONFIG.LOGGER_MAX_LINES) {
+      const excess = State.loggerLineCount - CONFIG.LOGGER_MAX_LINES;
+      let cut = 0;
+      for (let i = 0; i < excess; i++) {
+        const next = el.value.indexOf("\n", cut);
+        if (next === -1) break;
+        cut = next + 1;
+      }
+      el.value = el.value.slice(cut);
+      State.loggerLineCount = CONFIG.LOGGER_MAX_LINES;
+    }
+    el.scrollTop = el.scrollHeight;
 
     // Also log to console for debugging
     console.log(message, data !== null ? data : "");
@@ -218,9 +232,11 @@ const Logger = {
     if (!State.loggerContainer) return;
 
     State.loggerContainer.style.display = "block";
-    // Force reflow
-    void State.loggerContainer.offsetWidth;
-    State.loggerContainer.classList.add("show");
+    // Only force a reflow when the fade-in actually needs to start
+    if (!State.loggerContainer.classList.contains("show")) {
+      void State.loggerContainer.offsetWidth;
+      State.loggerContainer.classList.add("show");
+    }
 
     // Clear existing timeout
     if (State.loggerTimeout) {
@@ -874,7 +890,6 @@ const MessageHandler = {
       "[WS] Message stored in messagesReceived array. Total messages:",
       State.messagesReceived.length
     );
-    Logger.log("[WS] Current messagesReceived:", State.messagesReceived);
   },
 };
 

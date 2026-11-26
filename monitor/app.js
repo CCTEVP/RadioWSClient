@@ -98,8 +98,14 @@ const Logger = {
     `;
 
     State.logsEl.appendChild(logEntry);
+    // Drop the oldest entries so the DOM doesn't grow without bound
+    while (State.logsEl.childElementCount > Logger.MAX_ENTRIES) {
+      State.logsEl.firstElementChild.remove();
+    }
     State.logsEl.scrollTop = State.logsEl.scrollHeight;
   },
+
+  MAX_ENTRIES: 500,
 
   /**
    * Clears all logs

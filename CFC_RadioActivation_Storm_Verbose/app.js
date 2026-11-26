@@ -865,7 +865,6 @@ const MessageHandler = {
       "[WS] Message stored in messagesReceived array. Total messages:",
       State.messagesReceived.length
     );
-    Logger.log("[WS] Current messagesReceived:", State.messagesReceived);
   },
 };
 
