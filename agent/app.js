@@ -78,9 +78,12 @@ const Logger = {
     const logEntry = document.createElement("div");
     logEntry.className = `log-entry ${type}`;
 
-    logEntry.innerHTML = `
-      <span class="timestamp">[${timestamp}]</span> ${message}
-    `;
+    // Build with DOM APIs (not innerHTML): messages can carry raw server data,
+    // which must be displayed as text, never parsed as markup
+    const timestampEl = document.createElement("span");
+    timestampEl.className = "timestamp";
+    timestampEl.textContent = `[${timestamp}]`;
+    logEntry.append(timestampEl, " ", String(message));
 
     State.logsEl.appendChild(logEntry);
     // Drop the oldest entries so the DOM doesn't grow without bound
