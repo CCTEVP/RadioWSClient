@@ -2,6 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Opened without a trailing slash? Reload with one so the relative
+      // ./styles.css, ./app.js and ./img/ paths resolve inside this folder.
+      if (!/(\/|\.html?)$/i.test(location.pathname) && location.protocol !== "file:") {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CFC Storm Radio - Combined Player</title>
     <link rel="stylesheet" href="./styles.css" />

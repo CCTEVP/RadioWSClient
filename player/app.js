@@ -8,9 +8,8 @@
 // ============================================================================
 
 const CONFIG = {
-  WS_URL_BASE:
-    "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  //WS_URL_BASE: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  WS_URL_BASE: "ws://localhost:8080/rooms/radio",
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
   get WS_URL() {
@@ -25,7 +24,6 @@ const CONFIG = {
   LOGGER_VISIBLE_DURATION: 5000, // ms
   LOGGER_FADE_DURATION: 1000, // ms
   LOGGER_MAX_LINES: 500, // cap on-screen log lines so long-running players don't grow unbounded
-  NOW_PLAYING_DURATION: 10000, // ms
   NOW_PLAYING_FADE_DURATION: 500, // ms
 };
 
@@ -100,7 +98,7 @@ function buildWebSocketUrl() {
   append("adCopyId", State.adCopyId);
   append(
     "expectedSlotDurationMs",
-    normalize(State.expectedSlotDurationMs) ?? normalize(State.slotDuration)
+    normalize(State.expectedSlotDurationMs) ?? normalize(State.slotDuration),
   );
   append("broadcastDelay", normalize(State.broadcastDelay));
 
@@ -148,7 +146,7 @@ function initializeBroadSignConfig() {
 
   const expectedDuration = getBroadSignProperty(
     "expected_slot_duration_ms",
-    "10000"
+    "10000",
   );
   State.expectedSlotDurationMs = expectedDuration;
   State.slotDuration = parseInt(expectedDuration, 10);
@@ -156,7 +154,7 @@ function initializeBroadSignConfig() {
 
   Logger.log(`[INIT] Slot duration set to ${State.slotDuration}ms`);
   Logger.log(
-    `[INIT] Custom PoP timeout set to ${State.customPopTimeout}ms (reduced by ${CONFIG.CUSTOM_POP_OFFSET}ms)`
+    `[INIT] Custom PoP timeout set to ${State.customPopTimeout}ms (reduced by ${CONFIG.CUSTOM_POP_OFFSET}ms)`,
   );
 }
 
@@ -320,7 +318,7 @@ const UIController = {
         State.progressBarFill.style.width = "100%";
 
         Logger.log(
-          `[PROGRESS] Started progress bar animation for ${State.slotDuration}ms`
+          `[PROGRESS] Started progress bar animation for ${State.slotDuration}ms`,
         );
       }
     },
@@ -341,11 +339,11 @@ const UIController = {
       contentType,
       contentDuration,
       advertiserId,
-      advertiserName
+      advertiserName,
     ) {
       const contentElement = document.getElementById("nowPlayingContent");
       const contentDetailsElement = document.getElementById(
-        "nowPlayingContentDetails"
+        "nowPlayingContentDetails",
       );
       const advertiserElement = document.getElementById("nowPlayingAdvertiser");
       const container = document.getElementById("nowPlayingContainer");
@@ -376,7 +374,11 @@ const UIController = {
         container.style.display = "block";
         container.classList.remove("fade-out");
 
-        // Schedule fade-out after configured duration
+        // Stay visible for the content's duration (seconds). The server only
+        // accepts posts with a valid data.content.duration.
+        const visibleMs = Number(contentDuration) * 1000;
+
+        // Schedule fade-out after that duration
         State.nowPlayingTimeout = setTimeout(() => {
           State.nowPlayingTimeout = null;
           container.classList.add("fade-out");
@@ -389,8 +391,9 @@ const UIController = {
             container.style.display = "none";
             State.nowPlayingHideTimeout = null;
           }, CONFIG.NOW_PLAYING_FADE_DURATION);
-        }, CONFIG.NOW_PLAYING_DURATION);
+        }, visibleMs);
 
+        Logger.log(`[UI] Now Playing visible for ${visibleMs / 1000}s`);
         if (hadExistingTimeout) {
           Logger.log("[UI] Now Playing timer restarted due to new message");
         }
@@ -414,7 +417,7 @@ const UIController = {
       if (id < 1 || id > State.squares.length) {
         Logger.log(
           `[UI] Advertiser id out of range (1..${State.squares.length}):`,
-          id
+          id,
         );
         return;
       }
@@ -495,7 +498,7 @@ const WebSocketController = {
         // Show connection time if it was established
         if (State.connectionStartTime) {
           const connectionDuration = Math.round(
-            (Date.now() - State.connectionStartTime) / 1000
+            (Date.now() - State.connectionStartTime) / 1000,
           );
           Logger.log(`[WS] Connection lasted ${connectionDuration} seconds`);
         }
@@ -556,7 +559,7 @@ const WebSocketController = {
     Logger.log(
       `[WS] Reconnection attempt ${State.reconnectAttempts}/${
         CONFIG.MAX_RECONNECT_ATTEMPTS
-      } in ${delay / 1000}s...`
+      } in ${delay / 1000}s...`,
     );
 
     State.reconnectTimer = setTimeout(() => {
@@ -628,6 +631,20 @@ const WebSocketController = {
 
 const LocalWebSocketController = {
   /**
+   * True when running inside a BroadSign player (it injects BroadSignObject),
+   * or when forced with ?customPop=1 in the page URL
+   */
+  shouldSendCustomPOP() {
+    const forced =
+      new URLSearchParams(window.location.search).get("customPop") === "1";
+    return (
+      forced ||
+      (typeof window.BroadSignObject === "object" &&
+        window.BroadSignObject !== null)
+    );
+  },
+
+  /**
    * Starts timer to send custom POP before slot ends
    */
   startCustomPopTimer() {
@@ -637,11 +654,11 @@ const LocalWebSocketController = {
     }
 
     Logger.log(
-      `[TIMER] Starting custom POP timer for ${State.customPopTimeout}ms`
+      `[TIMER] Starting custom POP timer for ${State.customPopTimeout}ms`,
     );
     State.customPopTimer = setTimeout(() => {
       Logger.log(
-        `[TIMER] Executing sendCustomPOP after ${State.customPopTimeout}ms`
+        `[TIMER] Executing sendCustomPOP after ${State.customPopTimeout}ms`,
       );
       this.sendCustomPOP();
     }, State.customPopTimeout);
@@ -685,6 +702,17 @@ const LocalWebSocketController = {
    * Sends custom POP to local WebSocket
    */
   sendCustomPOP() {
+    // The custom POP goes to the BroadSign player's local control port, which
+    // only exists inside BroadSign. Elsewhere (e.g. a browser during
+    // development) the connection is refused, so skip it unless forced with
+    // ?customPop=1 (useful with a local stand-in on that port).
+    if (!this.shouldSendCustomPOP()) {
+      Logger.log(
+        "[LocalWS] Not running inside BroadSign (no BroadSignObject); custom POP skipped. Add ?customPop=1 to the URL to force it.",
+      );
+      return;
+    }
+
     const payload = this.buildPayload();
     Logger.log("[LocalWS] Preparing to send custom_pop payload:", payload);
 
@@ -849,7 +877,7 @@ const MessageHandler = {
 
     // Update UI
     Logger.log(
-      `[WS] Highlighting square for advertiser ID (post): ${advertiserIdValue}`
+      `[WS] Highlighting square for advertiser ID (post): ${advertiserIdValue}`,
     );
     UIController.squares.highlight(advertiserIdValue);
     UIController.nowPlaying.update(
@@ -858,7 +886,7 @@ const MessageHandler = {
       State.contentType,
       State.contentDuration,
       State.advertiserId,
-      State.advertiserName
+      State.advertiserName,
     );
   },
 
@@ -897,7 +925,7 @@ const MessageHandler = {
 
     Logger.log(
       "[WS] Message stored in messagesReceived array. Total messages:",
-      State.messagesReceived.length
+      State.messagesReceived.length,
     );
   },
 };

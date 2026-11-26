@@ -2,48 +2,138 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Opened as ".../monitor" (no trailing slash)? Reload as ".../monitor/" so
+      // the relative ./styles.css and ./app.js resolve inside this folder.
+      if (!/(\/|\.html?)$/i.test(location.pathname) && location.protocol !== "file:") {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b5ed7" />
     <title>WebSocket Monitor</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="container">
-      <h1>WebSocket Monitor</h1>
-      <h2>Radio Activated Campaigns</h2>
-      <div class="status-section">
-        <div id="status" class="status disconnected">Disconnected</div>
-        <div class="controls">
-          <button id="connectBtn" onclick="connect()">Connect</button>
-          <button id="disconnectBtn" onclick="disconnect()" disabled>
-            Disconnect
-          </button>
-          <button class="clear-logs" onclick="clearLogs()">Clear Logs</button>
+    <div class="app">
+      <header class="app-header">
+        <div class="titles">
+          <h1>WebSocket Monitor</h1>
+          <p class="subtitle">Radio Activated Campaigns</p>
         </div>
-      </div>
-      <div class="message-section">
-        <h3>Send JSON Message</h3>
-        <textarea id="messageInput" placeholder="Enter JSON message here...">
-        {
-          "type": "post",
-          "timestamp": "2025-10-02T00:00:00Z",
-          "data": {
-            "content": { "id": "6564", "name": "Marvel Thunderbolts", "type":"Monitor","duration":"10" },
-            "advertiser": { "id": "3", "name": "Total Radio" }
-          }
-        }
-        </textarea>
-        <br />
-        <button id="sendBtn" onclick="sendMessage()" disabled>
-          Send Message
-        </button>
-      </div>
+        <div id="status" class="status disconnected" role="status" aria-live="polite">
+          Disconnected
+        </div>
+      </header>
 
-      <div class="message-section">
-        <h3>Message Logs</h3>
-        <div id="logs" class="logs"></div>
-      </div>
+      <main class="layout">
+        <section class="panel panel-controls" aria-label="Connection and message">
+          <div class="controls">
+            <button id="connectBtn" type="button" onclick="connect()">Connect</button>
+            <button
+              id="disconnectBtn"
+              type="button"
+              class="disconnect"
+              onclick="disconnect()"
+              disabled
+            >
+              Disconnect
+            </button>
+            <button type="button" class="clear-logs" onclick="clearLogs()">
+              Clear logs
+            </button>
+          </div>
+
+          <details class="composer" open>
+            <summary>
+              <span class="composer-title">Send JSON message</span>
+              <span
+                id="delayCountdowns"
+                class="countdowns"
+                aria-live="off"
+                aria-label="Pending delayed broadcasts"
+              ></span>
+            </summary>
+            <label class="token-field" for="postToken">
+              <span class="token-label">Posting token</span>
+              <input
+                id="postToken"
+                type="password"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="Role advertiser, control, automation or admin"
+              />
+            </label>
+            <label class="visually-hidden" for="messageInput">JSON message</label>
+            <textarea
+              id="messageInput"
+              wrap="off"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              autocorrect="off"
+              placeholder="Enter JSON message here..."
+            >
+{
+  "type": "post",
+  "timestamp": "2025-10-02T00:00:00Z",
+  "data": {
+    "content": {
+      "delay": 0,
+      "id": "6564",
+      "name": "Marvel Thunderbolts",
+      "type": "Monitor",
+      "duration": "10"
+    },
+    "advertiser": {
+      "id": "3",
+      "name": "Total Radio"
+    }
+  }
+}</textarea
+            >
+            <div class="composer-actions">
+              <span class="hint">Ctrl + Enter to send</span>
+              <button id="sendBtn" type="button" onclick="sendMessage()">
+                Send message
+              </button>
+            </div>
+          </details>
+        </section>
+
+        <section class="panel panel-logs" aria-labelledby="logsTitle">
+          <h2 id="logsTitle" class="panel-title">Message logs</h2>
+          <div id="logs" class="logs" role="log" aria-live="polite"></div>
+        </section>
+      </main>
     </div>
 
+    <script>
+      // On phones the logs are the main view: start with the composer folded
+      // (one tap on "Send JSON message" opens it). Wide screens keep it open.
+      const composer = document.querySelector(".composer");
+      if (window.matchMedia("(max-width: 899px)").matches) {
+        composer.removeAttribute("open");
+      }
+
+      // Grow the message box to fit its content so the whole message is
+      // visible (CSS caps the height on phones; it scrolls beyond that).
+      const messageBox = document.getElementById("messageInput");
+      const fitMessageBox = () => {
+        if (!composer.open) return;
+        messageBox.style.height = "auto";
+        const border = messageBox.offsetHeight - messageBox.clientHeight;
+        messageBox.style.height = messageBox.scrollHeight + border + "px";
+      };
+      messageBox.addEventListener("input", fitMessageBox);
+      composer.addEventListener("toggle", fitMessageBox);
+      window.addEventListener("resize", fitMessageBox);
+      fitMessageBox();
+    </script>
     <script src="./app.js"></script>
   </body>
 </html>

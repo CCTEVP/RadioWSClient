@@ -1,403 +1,442 @@
 // ============================================================================
 // RADIO WEBSOCKET CLIENT - AGENT
-// Listens to remote WebSocket and triggers local WebSocket actions
+// Listens to the radio room on the remote server and, for every "post",
+// tells the local BroadSign player (ws://localhost:2326) to play the radio
+// content now, for as long as the content's duration.
 // ============================================================================
 
 // ============================================================================
 // 1. CONFIGURATION & CONSTANTS
 // ============================================================================
 
+const SERVERS = {
+  prod: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  local: "ws://localhost:8080/rooms/radio",
+};
+
 const CONFIG = {
-  WS_URL_BASE:
-    "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  // Pick the server with ?server=local|prod, or any URL with ?ws=wss://...
+  // (defaults to prod)
+  WS_URL_BASE: (() => {
+    const params = new URLSearchParams(window.location.search);
+    const custom = params.get("ws");
+    if (custom && /^wss?:\/\//i.test(custom)) return custom;
+    return SERVERS[params.get("server")] || SERVERS.prod;
+  })(),
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6ImNvbnRyb2wiLCJyb29tIjoicmFkaW8iLCJleHBpcmVzQXQiOjQ5MTQxMjE1NjY0NjQsIm1ldGFkYXRhIjp7InJvbGUiOiJjb250cm9sIiwidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.P3mH8nRwT6jKbVxZ9sLq2YdF5aGtC4wJoX1yNiE7uMp",
   get WS_URL() {
     return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
   },
+
   LOCAL_WS_URL: "ws://localhost:2326",
-  RADIO_CONTENT_PAYLOAD: {
-    rc: {
-      version: "1",
-      id: "1",
-      action: "play_now",
-      name: "RadioContent",
-      "max-duration": "10",
-    },
-  },
+  LOCAL_CONNECT_TIMEOUT_MS: 4000,
+
+  // play_now is sent with max-duration = content.duration (seconds), or this
+  DEFAULT_MAX_DURATION_S: 10,
+  CONTENT_NAME: "RadioContent",
+
+  HEARTBEAT_INTERVAL: 30000,
+  RECONNECT_DELAY: 3000, // grows to 15 s over the first attempts
+  MAX_RECONNECT_ATTEMPTS: 20, // fast retries (~4.5 min), then slow ones
+  SLOW_RECONNECT_DELAY: 60000,
 };
 
 // ============================================================================
-// 2. STATE MANAGEMENT
+// 2. STATE
 // ============================================================================
 
 const State = {
   ws: null,
   localWs: null,
+  localConnecting: null, // Promise while a local connection is being opened
+  heartbeatTimer: null,
+  reconnectTimer: null,
+  reconnectAttempts: 0,
+  isManualDisconnect: false,
+  connectionStartTime: null,
+  stats: { posts: 0, sent: 0, failed: 0 },
 
-  // UI Elements (cached)
+  // UI elements (cached)
   statusEl: null,
+  localStatusEl: null,
   connectBtn: null,
   disconnectBtn: null,
   logsEl: null,
+  payloadEl: null,
+  lastTriggerEl: null,
+  statEls: {},
 };
 
-// ============================================================================
-// 3. UTILITY FUNCTIONS
-// ============================================================================
-
-/**
- * Initialize DOM element references
- */
 function initializeDOMElements() {
-  State.statusEl = document.getElementById("status");
-  State.connectBtn = document.getElementById("connectBtn");
-  State.disconnectBtn = document.getElementById("disconnectBtn");
-  State.logsEl = document.getElementById("logs");
+  const $ = (id) => document.getElementById(id);
+  State.statusEl = $("status");
+  State.localStatusEl = $("localStatus");
+  State.connectBtn = $("connectBtn");
+  State.disconnectBtn = $("disconnectBtn");
+  State.logsEl = $("logs");
+  State.payloadEl = $("payloadDisplay");
+  State.lastTriggerEl = $("lastTrigger");
+  State.statEls = { posts: $("statPosts"), sent: $("statSent"), failed: $("statFailed") };
+
+  const note = $("serverNote");
+  if (note) note.textContent = `Server: ${CONFIG.WS_URL_BASE}`;
 }
 
 // ============================================================================
-// 4. LOGGER MODULE
+// 3. LOGGER
 // ============================================================================
 
 const Logger = {
+  MAX_ENTRIES: 500,
+
   /**
-   * Logs a message to the UI and console
-   * @param {string} message - Log message
-   * @param {string} type - Log type (info, error, received, sent, local-received)
+   * @param {string} message
+   * @param {string} type - info | error | received | sent | local-received
    */
   log(message, type = "info") {
-    // Always log to console
     const timestamp = new Date().toLocaleTimeString();
     console.log(`[${timestamp}] [${type}] ${message}`);
-
-    // Also log to UI if element exists
     if (!State.logsEl) return;
 
-    const logEntry = document.createElement("div");
-    logEntry.className = `log-entry ${type}`;
+    // Built with DOM APIs (never innerHTML): messages can carry server data
+    const entry = document.createElement("div");
+    entry.className = `log-entry ${type}`;
+    const ts = document.createElement("span");
+    ts.className = "timestamp";
+    ts.textContent = `[${timestamp}]`;
+    entry.append(ts, " ", String(message));
 
-    // Build with DOM APIs (not innerHTML): messages can carry raw server data,
-    // which must be displayed as text, never parsed as markup
-    const timestampEl = document.createElement("span");
-    timestampEl.className = "timestamp";
-    timestampEl.textContent = `[${timestamp}]`;
-    logEntry.append(timestampEl, " ", String(message));
-
-    State.logsEl.appendChild(logEntry);
-    // Drop the oldest entries so the DOM doesn't grow without bound
-    while (State.logsEl.childElementCount > Logger.MAX_ENTRIES) {
+    State.logsEl.appendChild(entry);
+    while (State.logsEl.childElementCount > this.MAX_ENTRIES) {
       State.logsEl.firstElementChild.remove();
     }
     State.logsEl.scrollTop = State.logsEl.scrollHeight;
   },
 
-  MAX_ENTRIES: 500,
-
-  /**
-   * Clears all logs
-   */
   clear() {
-    if (State.logsEl) {
-      State.logsEl.innerHTML = "";
-    }
+    if (State.logsEl) State.logsEl.replaceChildren();
   },
 };
 
 // ============================================================================
-// 5. UI CONTROLLER
+// 4. UI
 // ============================================================================
 
-const UIController = {
-  /**
-   * Updates connection status display
-   * @param {string} status - Status class (connecting, connected, disconnected)
-   * @param {string} text - Status text to display
-   */
-  updateStatus(status, text) {
+const UI = {
+  remoteStatus(state, text) {
     if (!State.statusEl) return;
-    State.statusEl.className = `status ${status}`;
-    State.statusEl.textContent = text;
+    State.statusEl.className = `status ${state}`;
+    State.statusEl.textContent = `Remote: ${text}`;
   },
 
-  /**
-   * Updates button states based on connection
-   * @param {boolean} connected - Whether connected or not
-   */
-  updateButtons(connected) {
+  localStatus(state, text) {
+    if (!State.localStatusEl) return;
+    State.localStatusEl.className = `status ${state}`;
+    State.localStatusEl.textContent = `BroadSign: ${text}`;
+  },
+
+  buttons(connected) {
     if (State.connectBtn) State.connectBtn.disabled = connected;
     if (State.disconnectBtn) State.disconnectBtn.disabled = !connected;
   },
+
+  stats() {
+    for (const [key, el] of Object.entries(State.statEls)) {
+      if (el) el.textContent = String(State.stats[key]);
+    }
+  },
+
+  lastTrigger(text) {
+    if (State.lastTriggerEl) State.lastTriggerEl.textContent = text;
+  },
+
+  payload(payload) {
+    if (State.payloadEl) State.payloadEl.textContent = JSON.stringify(payload, null, 2);
+  },
 };
 
 // ============================================================================
-// 6. REMOTE WEBSOCKET MODULE
+// 5. REMOTE WEBSOCKET (radio room)
 // ============================================================================
 
-const RemoteWebSocketController = {
-  /**
-   * Connects to remote WebSocket server
-   */
+const Remote = {
   connect() {
-    if (State.ws && State.ws.readyState === WebSocket.OPEN) {
-      Logger.log("Already connected to remote server!", "info");
+    if (
+      State.ws &&
+      (State.ws.readyState === WebSocket.OPEN ||
+        State.ws.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
-    UIController.updateStatus("connecting", "Connecting to remote server...");
-    Logger.log(`Connecting to ${CONFIG.WS_URL}...`, "info");
+    State.isManualDisconnect = false;
+    UI.remoteStatus("connecting", "connecting…");
+    Logger.log(`Connecting to ${CONFIG.WS_URL_BASE}…`);
 
     try {
       State.ws = new WebSocket(CONFIG.WS_URL);
-
-      State.ws.onopen = () => {
-        Logger.log("Connected to remote WebSocket server", "info");
-        UIController.updateStatus("connected", "Connected to remote server");
-        UIController.updateButtons(true);
-        this.announcePresence("agent");
-      };
-
-      State.ws.onmessage = (event) => {
-        this.handleMessage(event.data);
-      };
-
-      State.ws.onclose = (event) => {
-        const reason = event.wasClean
-          ? "Remote connection closed cleanly"
-          : "Remote connection lost";
-        Logger.log(
-          `${reason} (Code: ${event.code}, Reason: ${
-            event.reason || "No reason provided"
-          })`,
-          "info"
-        );
-        UIController.updateStatus(
-          "disconnected",
-          "Disconnected from remote server"
-        );
-        UIController.updateButtons(false);
-      };
-
-      State.ws.onerror = (error) => {
-        Logger.log("Remote WebSocket error occurred", "error");
-        console.error("Remote WebSocket error:", error);
-      };
     } catch (error) {
-      Logger.log(
-        `Failed to connect to remote server: ${error.message}`,
-        "error"
-      );
-      UIController.updateStatus("disconnected", "Remote connection failed");
-      UIController.updateButtons(false);
-    }
-  },
-
-  /**
-   * Announces presence to remote server
-   * @param {string} role - Client role identifier
-   */
-  announcePresence(role) {
-    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) return;
-
-    const announcement = {
-      type: "announce",
-      timestamp: new Date().toISOString(),
-      clientId: role,
-      userAgent: navigator.userAgent,
-      screen: {
-        width: window.screen?.width || null,
-        height: window.screen?.height || null,
-      },
-      location: { href: location.href },
-    };
-
-    try {
-      State.ws.send(JSON.stringify(announcement));
-      Logger.log("Announce sent: " + JSON.stringify(announcement), "sent");
-    } catch (e) {
-      Logger.log("Failed to send announce: " + e.message, "error");
-    }
-  },
-
-  /**
-   * Handles incoming messages from remote server
-   * @param {string} rawData - Raw message data
-   */
-  handleMessage(rawData) {
-    let data;
-    try {
-      data = JSON.parse(rawData);
-    } catch (e) {
-      Logger.log(
-        `Received non-JSON remote message ignored: ${rawData}`,
-        "received"
-      );
+      Logger.log(`Failed to connect: ${error.message}`, "error");
+      this.scheduleReconnect();
       return;
     }
 
-    // Unwrap broadcast envelope if present
-    let inner = data;
-    if (
-      data &&
-      data.type === "broadcast" &&
-      data.data &&
-      typeof data.data === "object"
-    ) {
-      inner = data.data;
+    State.ws.onopen = () => {
+      clearTimeout(State.reconnectTimer);
+      State.reconnectAttempts = 0;
+      State.connectionStartTime = Date.now();
+      Logger.log("Connected to the radio room");
+      UI.remoteStatus("connected", "connected");
+      UI.buttons(true);
+      this.startHeartbeat();
+      this.announcePresence();
+    };
+
+    State.ws.onmessage = (event) => this.handleMessage(event.data);
+
+    State.ws.onerror = () => {
+      Logger.log("Remote WebSocket error", "error");
+    };
+
+    State.ws.onclose = (event) => {
+      this.stopHeartbeat();
+      Logger.log(
+        `Remote connection closed (code ${event.code}${
+          event.reason ? `, ${event.reason}` : ""
+        })`
+      );
+      if (State.connectionStartTime) {
+        const seconds = Math.round((Date.now() - State.connectionStartTime) / 1000);
+        Logger.log(`Connection lasted ${seconds}s`);
+        State.connectionStartTime = null;
+      }
+      UI.buttons(false);
+      State.ws = null;
+
+      if (State.isManualDisconnect) {
+        UI.remoteStatus("disconnected", "offline");
+      } else if (event.code === 4001 || event.code === 4002 || event.code === 4004) {
+        // Auth problems will not fix themselves by retrying
+        UI.remoteStatus("disconnected", "rejected");
+        Logger.log("Token rejected by the server; not reconnecting", "error");
+      } else {
+        this.scheduleReconnect();
+      }
+    };
+  },
+
+  scheduleReconnect() {
+    clearTimeout(State.reconnectTimer);
+    State.reconnectAttempts++;
+    const fast = State.reconnectAttempts <= CONFIG.MAX_RECONNECT_ATTEMPTS;
+    const delay = fast
+      ? CONFIG.RECONNECT_DELAY * Math.min(State.reconnectAttempts, 5)
+      : CONFIG.SLOW_RECONNECT_DELAY;
+    UI.remoteStatus("connecting", `retry in ${delay / 1000}s`);
+    Logger.log(`Reconnecting in ${delay / 1000}s (attempt ${State.reconnectAttempts})`);
+    State.reconnectTimer = setTimeout(() => {
+      if (!State.isManualDisconnect) this.connect();
+    }, delay);
+  },
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    State.heartbeatTimer = setInterval(() => {
+      if (State.ws?.readyState === WebSocket.OPEN) {
+        State.ws.send(
+          JSON.stringify({ type: "keepalive", timestamp: new Date().toISOString(), clientId: "agent" })
+        );
+      }
+    }, CONFIG.HEARTBEAT_INTERVAL);
+  },
+
+  stopHeartbeat() {
+    clearInterval(State.heartbeatTimer);
+    State.heartbeatTimer = null;
+  },
+
+  announcePresence() {
+    const announcement = {
+      type: "announce",
+      timestamp: new Date().toISOString(),
+      clientId: "agent",
+      userAgent: navigator.userAgent,
+      location: { href: location.href },
+    };
+    try {
+      State.ws.send(JSON.stringify(announcement));
+      Logger.log("Announce sent", "sent");
+    } catch (e) {
+      Logger.log(`Failed to send announce: ${e.message}`, "error");
+    }
+  },
+
+  handleMessage(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      Logger.log(`Ignored non-JSON message: ${String(raw).slice(0, 200)}`, "received");
+      return;
     }
 
-    // Log the raw remote message
+    if (data.type === "welcome") {
+      Logger.log(`Server: ${data.message}`, "received");
+      return;
+    }
+    if (data.type === "ack") return; // keepalive acknowledgements
+
+    // Unwrap the broadcast envelope used for messages sent over WebSocket
+    const inner = data.type === "broadcast" && data.data && typeof data.data === "object" ? data.data : data;
+    if (inner?.type !== "post") return; // only posts trigger BroadSign
+
+    State.stats.posts++;
+    UI.stats();
+    const content = inner.data?.content || {};
     Logger.log(
-      `Received from remote: ${JSON.stringify(data, null, 2)}`,
+      `Post received: ${content.name || "unnamed content"}${
+        content.duration ? ` (${content.duration}s)` : ""
+      }`,
       "received"
     );
-
-    // Only react when the (possibly unwrapped) message is a post
-    if (inner && inner.type === "post") {
-      Logger.log(
-        "Trigger: 'post' message received - ensuring local WebSocket communication",
-        "info"
-      );
-      this.handlePostMessage(inner);
-    }
+    Bridge.trigger(content, "post");
   },
 
-  /**
-   * Handles post-type messages
-   * @param {object} postMessage - Post message data
-   */
-  handlePostMessage(postMessage) {
-    Logger.log(
-      "Post message received - connecting to local WebSocket if needed...",
-      "info"
-    );
-    LocalWebSocketController.connectAndSend();
-  },
-
-  /**
-   * Disconnects from remote server
-   */
   disconnect() {
-    if (State.ws) {
-      State.ws.close(1000, "User initiated disconnect");
-      State.ws = null;
-    }
+    State.isManualDisconnect = true;
+    clearTimeout(State.reconnectTimer);
+    this.stopHeartbeat();
+    if (State.ws) State.ws.close(1000, "User initiated disconnect");
+    UI.remoteStatus("disconnected", "offline");
   },
 };
 
 // ============================================================================
-// 7. LOCAL WEBSOCKET MODULE
+// 6. LOCAL BROADSIGN WEBSOCKET (port 2326)
 // ============================================================================
 
-const LocalWebSocketController = {
-  /**
-   * Connects to local WebSocket and sends payload
-   */
-  connectAndSend() {
-    if (State.localWs && State.localWs.readyState === WebSocket.OPEN) {
-      // If already connected, just send the payload
-      this.sendPayload();
+const Local = {
+  /** Resolve with an open local socket, opening one if needed */
+  ensureOpen() {
+    if (State.localWs?.readyState === WebSocket.OPEN) return Promise.resolve(State.localWs);
+    if (State.localConnecting) return State.localConnecting;
+
+    UI.localStatus("connecting", "connecting…");
+    State.localConnecting = new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        State.localConnecting = null;
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch { /* ignore */ }
+        done(reject, new Error(`no answer from ${CONFIG.LOCAL_WS_URL} within ${CONFIG.LOCAL_CONNECT_TIMEOUT_MS / 1000}s`));
+      }, CONFIG.LOCAL_CONNECT_TIMEOUT_MS);
+
+      let ws;
+      try {
+        ws = new WebSocket(CONFIG.LOCAL_WS_URL);
+      } catch (error) {
+        done(reject, error);
+        return;
+      }
+      State.localWs = ws;
+
+      let opened = false;
+      ws.onopen = () => {
+        opened = true;
+        UI.localStatus("connected", "connected");
+        Logger.log(`Connected to BroadSign at ${CONFIG.LOCAL_WS_URL}`);
+        done(resolve, ws);
+      };
+      ws.onmessage = (event) => this.handleMessage(event.data);
+      ws.onerror = () => {
+        done(reject, new Error(`cannot reach ${CONFIG.LOCAL_WS_URL} (is the BroadSign player running?)`));
+      };
+      ws.onclose = () => {
+        if (State.localWs === ws) State.localWs = null;
+        // A failed attempt keeps its "unreachable" status; only a connection
+        // that was actually open drops back to idle
+        if (opened) UI.localStatus("idle", "idle");
+        done(reject, new Error("local connection closed"));
+      };
+    });
+    return State.localConnecting;
+  },
+
+  async send(payload) {
+    const ws = await this.ensureOpen();
+    ws.send(JSON.stringify(payload));
+  },
+
+  handleMessage(raw) {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      Logger.log(`BroadSign: ${raw}`, "local-received");
       return;
     }
-
+    const rc = data?.rc;
+    const ok = rc && String(rc.status) === "1";
     Logger.log(
-      `Connecting to local WebSocket at ${CONFIG.LOCAL_WS_URL}...`,
-      "info"
+      `BroadSign ${rc?.action || "response"}: ${ok ? "OK" : "status " + (rc?.status ?? "?")}`,
+      ok ? "local-received" : "error"
     );
-
-    try {
-      State.localWs = new WebSocket(CONFIG.LOCAL_WS_URL);
-
-      State.localWs.onopen = () => {
-        Logger.log("Connected to local WebSocket server", "info");
-        // Send the radio content payload immediately upon connection
-        this.sendPayload();
-      };
-
-      State.localWs.onmessage = (event) => {
-        this.handleMessage(event.data);
-      };
-
-      State.localWs.onclose = (event) => {
-        const reason = event.wasClean
-          ? "Local connection closed cleanly"
-          : "Local connection lost";
-        Logger.log(
-          `${reason} (Code: ${event.code}, Reason: ${
-            event.reason || "No reason provided"
-          })`,
-          "info"
-        );
-      };
-
-      State.localWs.onerror = (error) => {
-        Logger.log("Local WebSocket error occurred", "error");
-        console.error("Local WebSocket error:", error);
-      };
-    } catch (error) {
-      Logger.log(
-        `Failed to connect to local server: ${error.message}`,
-        "error"
-      );
-    }
   },
 
-  /**
-   * Sends radio content payload to local WebSocket
-   */
-  sendPayload() {
-    if (!State.localWs || State.localWs.readyState !== WebSocket.OPEN) {
-      Logger.log(
-        "Local WebSocket not connected - cannot send payload",
-        "error"
-      );
-      return;
-    }
-
-    try {
-      const payloadString = JSON.stringify(CONFIG.RADIO_CONTENT_PAYLOAD);
-      State.localWs.send(payloadString);
-      Logger.log(
-        `Sent to local WebSocket: ${JSON.stringify(
-          CONFIG.RADIO_CONTENT_PAYLOAD,
-          null,
-          2
-        )}`,
-        "sent"
-      );
-    } catch (error) {
-      Logger.log(
-        `Failed to send payload to local WebSocket: ${error.message}`,
-        "error"
-      );
-    }
-  },
-
-  /**
-   * Handles messages from local WebSocket
-   * @param {string} rawData - Raw message data
-   */
-  handleMessage(rawData) {
-    try {
-      const data = JSON.parse(rawData);
-      Logger.log(
-        `Received from local: ${JSON.stringify(data, null, 2)}`,
-        "local-received"
-      );
-    } catch (e) {
-      Logger.log(`Received from local: ${rawData}`, "local-received");
-    }
-  },
-
-  /**
-   * Disconnects from local server
-   */
   disconnect() {
-    if (State.localWs) {
-      State.localWs.close(1000, "User initiated disconnect");
-      State.localWs = null;
+    if (State.localWs) State.localWs.close(1000, "User initiated disconnect");
+    State.localWs = null;
+    UI.localStatus("idle", "idle");
+  },
+};
+
+// ============================================================================
+// 7. BRIDGE (post -> BroadSign play_now)
+// ============================================================================
+
+const Bridge = {
+  /** Seconds to play: content.duration when valid, otherwise the default */
+  maxDurationSeconds(content) {
+    const seconds = Number(content?.duration);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : CONFIG.DEFAULT_MAX_DURATION_S;
+  },
+
+  buildPayload(content) {
+    return {
+      rc: {
+        version: "1",
+        id: String(Date.now()),
+        action: "play_now",
+        name: CONFIG.CONTENT_NAME,
+        "max-duration": String(this.maxDurationSeconds(content)),
+      },
+    };
+  },
+
+  async trigger(content, source) {
+    const payload = this.buildPayload(content);
+    UI.payload(payload);
+    const label = content?.name || (source === "test" ? "test trigger" : "unnamed content");
+    const time = new Date().toLocaleTimeString();
+
+    try {
+      await Local.send(payload);
+      State.stats.sent++;
+      Logger.log(`play_now sent to BroadSign for ${payload.rc["max-duration"]}s (${label})`, "sent");
+      UI.lastTrigger(`Last: ${label}, ${payload.rc["max-duration"]}s at ${time}`);
+    } catch (error) {
+      State.stats.failed++;
+      Logger.log(`Could not send play_now: ${error.message}`, "error");
+      UI.lastTrigger(`Failed at ${time}: ${error.message}`);
+      UI.localStatus("disconnected", "unreachable");
     }
+    UI.stats();
   },
 };
 
@@ -405,42 +444,33 @@ const LocalWebSocketController = {
 // 8. PUBLIC API
 // ============================================================================
 
-/**
- * Connects to remote WebSocket
- */
 function connect() {
-  RemoteWebSocketController.connect();
+  Remote.connect();
 }
 
-/**
- * Disconnects from both remote and local WebSockets
- */
 function disconnect() {
-  RemoteWebSocketController.disconnect();
-  LocalWebSocketController.disconnect();
+  Remote.disconnect();
+  Local.disconnect();
 }
 
-/**
- * Clears the log display
- */
+/** Send play_now to BroadSign without waiting for a post */
+function testTrigger() {
+  Logger.log("Manual test trigger");
+  Bridge.trigger({ name: "Test trigger" }, "test");
+}
+
 function clearLogs() {
   Logger.clear();
 }
 
-// ============================================================================
-// 9. INITIALIZATION
-// ============================================================================
-
-/**
- * Initialize application on page load
- */
 window.addEventListener("load", () => {
   initializeDOMElements();
-  Logger.log("Agent starting - auto-connecting to remote server...", "info");
+  UI.stats();
+  Logger.log("Agent starting; connecting to the radio room…");
   connect();
 });
 
-// Expose public functions to window
 window.connect = connect;
 window.disconnect = disconnect;
+window.testTrigger = testTrigger;
 window.clearLogs = clearLogs;

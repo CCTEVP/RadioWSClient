@@ -10,7 +10,7 @@
 const CONFIG = {
   WS_URL_BASE:
     "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  //WS_URL_BASE: "ws://localhost:8080/rooms/radio",
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
   get WS_URL() {

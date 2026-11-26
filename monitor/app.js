@@ -8,14 +8,21 @@
 // ============================================================================
 
 const CONFIG = {
-  WS_URL_BASE:
-    "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  //WS_URL_BASE: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  WS_URL_BASE: "ws://localhost:8080/rooms/radio",
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6Im1vbml0b3IiLCJyb29tIjoicmFkaW8iLCJleHBpcmVzQXQiOjQ5MTQxMjE1NjY0NjQsIm1ldGFkYXRhIjp7InJvbGUiOiJtb25pdG9yIiwidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.5f5owqdr4j3gRD0UtiZLTYI_Du4Sa9XtRNN84B0fat4",
   get WS_URL() {
     return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
   },
+  // Posts go over HTTP to the same room ("ws://host/rooms/radio" ->
+  // "http://host/rooms/radio/post"). The built-in AUTH_TOKEN above is
+  // published, so it can only receive; posting needs a token minted with a
+  // posting role (advertiser, control, automation or admin), entered in the UI.
+  get POST_URL() {
+    return `${this.WS_URL_BASE.replace(/^ws/, "http")}/post`;
+  },
+  POST_TOKEN_STORAGE_KEY: "radioMonitor.postToken",
   HEARTBEAT_INTERVAL: 30000, // 30 seconds
   RECONNECT_DELAY: 3000, // 3 seconds (grows to 15s over the first attempts)
   MAX_RECONNECT_ATTEMPTS: 20, // Fast retries (~4.5 minutes total)
@@ -41,6 +48,8 @@ const State = {
   sendBtn: null,
   messageInput: null,
   logsEl: null,
+  countdownEl: null,
+  postTokenInput: null,
 };
 
 // ============================================================================
@@ -57,12 +66,20 @@ function initializeDOMElements() {
   State.sendBtn = document.getElementById("sendBtn");
   State.messageInput = document.getElementById("messageInput");
   State.logsEl = document.getElementById("logs");
+  State.countdownEl = document.getElementById("delayCountdowns");
+  State.postTokenInput = document.getElementById("postToken");
 }
 
 /**
  * Setup event listeners
  */
 function setupEventListeners() {
+  // Remember the posting token for this browser session
+  if (State.postTokenInput) {
+    PostToken.restore();
+    State.postTokenInput.addEventListener("input", () => PostToken.save());
+  }
+
   // Handle Ctrl+Enter in textarea to send message
   if (State.messageInput) {
     State.messageInput.addEventListener("keydown", (event) => {
@@ -144,7 +161,8 @@ const UIController = {
   updateButtons(connected) {
     if (State.connectBtn) State.connectBtn.disabled = connected;
     if (State.disconnectBtn) State.disconnectBtn.disabled = !connected;
-    if (State.sendBtn) State.sendBtn.disabled = !connected;
+    // Send posts over HTTP with the posting token, so it does not depend on
+    // the monitor's WebSocket connection (it stays enabled)
   },
 };
 
@@ -198,7 +216,7 @@ const WebSocketController = {
           `${reason} (Code: ${event.code}, Reason: ${
             event.reason || "No reason provided"
           })`,
-          "info"
+          "info",
         );
 
         this.stopHeartbeat();
@@ -206,7 +224,7 @@ const WebSocketController = {
         // Show connection time if it was established
         if (State.connectionStartTime) {
           const connectionDuration = Math.round(
-            (Date.now() - State.connectionStartTime) / 1000
+            (Date.now() - State.connectionStartTime) / 1000,
           );
           Logger.log(`Connection lasted ${connectionDuration} seconds`, "info");
         }
@@ -242,7 +260,7 @@ const WebSocketController = {
       } else if (data.type === "broadcast") {
         Logger.log(
           `Broadcast from ${data.from}: ${JSON.stringify(data.data, null, 2)}`,
-          "received"
+          "received",
         );
       } else {
         Logger.log(`Received: ${JSON.stringify(data, null, 2)}`, "received");
@@ -282,31 +300,65 @@ const WebSocketController = {
   },
 
   /**
-   * Sends a custom message
+   * Posts a message to the room over HTTP with the posting token. (The
+   * monitor's own WebSocket token is published and can only receive.)
    * @param {string} message - JSON message to send
+   * @returns {Promise<boolean>} true when the server accepted it (202)
    */
-  send(message) {
-    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) {
-      Logger.log("Not connected to WebSocket server", "error");
-      return false;
-    }
-
+  async send(message) {
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       Logger.log("Please enter a message to send", "error");
       return false;
     }
 
+    let jsonData;
     try {
-      // Validate JSON
-      const jsonData = JSON.parse(trimmedMessage);
-
-      // Send the message
-      State.ws.send(trimmedMessage);
-      Logger.log(`Sent: ${JSON.stringify(jsonData, null, 2)}`, "sent");
-      return true;
+      jsonData = JSON.parse(trimmedMessage);
     } catch (error) {
       Logger.log(`Invalid JSON: ${error.message}`, "error");
+      return false;
+    }
+
+    const postToken = PostToken.get();
+    if (!postToken) {
+      Logger.log(
+        "Posting token required: paste a token minted with role advertiser, control, automation or admin into \"Posting token\".",
+        "error"
+      );
+      State.postTokenInput?.focus();
+      return false;
+    }
+
+    try {
+      const response = await fetch(CONFIG.POST_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${postToken}`,
+        },
+        body: trimmedMessage,
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (response.status === 202) {
+        Logger.log(`Sent: ${JSON.stringify(jsonData, null, 2)}`, "sent");
+        DelayCountdown.track(jsonData);
+        return true;
+      }
+
+      const reasons = {
+        401: "the posting token is invalid or expired",
+        403: "this token's role is not allowed to post",
+      };
+      const detail = result.details ? ` (${result.details.join("; ")})` : "";
+      Logger.log(
+        `Not sent (HTTP ${response.status}): ${reasons[response.status] || result.error || "rejected by server"}${detail}`,
+        "error"
+      );
+      return false;
+    } catch (error) {
+      Logger.log(`Not sent: cannot reach ${CONFIG.POST_URL} (${error.message})`, "error");
       return false;
     }
   },
@@ -364,14 +416,17 @@ const WebSocketController = {
         `Fast reconnection attempts used up; retrying every ${
           CONFIG.SLOW_RECONNECT_DELAY / 1000
         }s`,
-        "error"
+        "error",
       );
     }
     Logger.log(
       `Reconnection attempt ${attemptLabel} in ${delay / 1000}s...`,
-      "info"
+      "info",
     );
-    UIController.updateStatus("connecting", `Reconnecting... (${attemptLabel})`);
+    UIController.updateStatus(
+      "connecting",
+      `Reconnecting... (${attemptLabel})`,
+    );
 
     State.reconnectTimer = setTimeout(() => {
       if (!State.isManualDisconnect) {
@@ -396,6 +451,175 @@ const WebSocketController = {
       setTimeout(() => {
         State.isManualDisconnect = false;
       }, 1000);
+    }
+  },
+};
+
+// ============================================================================
+// 6a. POSTING TOKEN
+// Kept for this browser session only (sessionStorage), never in the code.
+// ============================================================================
+
+const PostToken = {
+  get() {
+    return (State.postTokenInput?.value || "").trim();
+  },
+
+  restore() {
+    if (!State.postTokenInput) return;
+    try {
+      State.postTokenInput.value =
+        sessionStorage.getItem(CONFIG.POST_TOKEN_STORAGE_KEY) || "";
+    } catch (_) {
+      /* storage unavailable: start empty */
+    }
+  },
+
+  save() {
+    try {
+      const token = this.get();
+      if (token) sessionStorage.setItem(CONFIG.POST_TOKEN_STORAGE_KEY, token);
+      else sessionStorage.removeItem(CONFIG.POST_TOKEN_STORAGE_KEY);
+    } catch (_) {
+      /* storage unavailable: token just isn't remembered */
+    }
+  },
+};
+
+// ============================================================================
+// 6b. DELAY COUNTDOWN
+// Shows one small timer per sent post, next to "Send JSON message". Each
+// badge has up to two phases:
+//   1. amber  "⏱ Ns": time until the post is broadcast (its delay); skipped
+//                     when the post has no delay (or delay 0)
+//   2. blue   "▶ Ns": time the content stays on screen (content.duration),
+//                     then it fades out
+// Badges are only added after the server accepted the post (202), so
+// data.content.duration and data.content.delay are known to be valid. The
+// server never echoes a broadcast back to its sender, so both phases are
+// timed from the send.
+// ============================================================================
+
+const DelayCountdown = {
+  MAX_BADGES: 6, // beyond this, the rest are summarised as "+N"
+  FADE_MS: 600, // must match the .countdown opacity transition
+  entries: [], // { id, due, playEnd, label, el }, kept soonest first
+  nextId: 1,
+  tickTimer: null,
+  moreEl: null,
+  lastOrder: "",
+
+  /** Seconds on screen: data.content.duration (required by the server) */
+  contentDurationSeconds(message) {
+    return Number(message.data.content.duration);
+  },
+
+  /** Seconds before broadcast: data.content.delay, 0 when not declared */
+  declaredDelaySeconds(message) {
+    const { delay } = message.data.content;
+    return delay === undefined ? 0 : Number(delay);
+  },
+
+  /**
+   * Add a badge for a post that was just sent. Delayed posts start in the
+   * amber phase; posts without a delay go straight to the blue duration
+   * phase. Other message types get no badge.
+   */
+  track(message) {
+    if (!message || String(message.type).toLowerCase() !== "post") return;
+    const seconds = this.declaredDelaySeconds(message);
+
+    const name = message.data?.content?.name;
+    const durationSeconds = this.contentDurationSeconds(message);
+    const due = Date.now() + seconds * 1000;
+    this.entries.push({
+      id: this.nextId++,
+      due,
+      playEnd: due + durationSeconds * 1000,
+      label: name ? String(name) : "Post",
+      el: null,
+    });
+    this.entries.sort((a, b) => a.due - b.due);
+    const quoted = name ? ` "${name}"` : "";
+    Logger.log(
+      seconds > 0
+        ? `Delayed post${quoted}: broadcast in ${seconds}s, then on screen for ${durationSeconds}s`
+        : `Post${quoted}: on screen for ${durationSeconds}s`,
+      "info"
+    );
+
+    this.render();
+    if (!this.tickTimer) {
+      this.tickTimer = setInterval(() => this.render(), 250);
+    }
+  },
+
+  format(totalSeconds) {
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  },
+
+  render() {
+    const container = State.countdownEl;
+    if (!container) return;
+
+    const now = Date.now();
+    // Remove entries whose fade-out has finished
+    this.entries = this.entries.filter(
+      (entry) => now < entry.playEnd + this.FADE_MS
+    );
+
+    const shown = this.entries.slice(0, this.MAX_BADGES);
+    const hidden = this.entries.length - shown.length;
+
+    // Update each badge in place (re-creating them every tick would cancel
+    // the colour change and fade transitions)
+    for (const entry of shown) {
+      if (!entry.el) {
+        entry.el = document.createElement("span");
+        entry.el.setAttribute("role", "timer");
+      }
+      const el = entry.el;
+
+      if (now < entry.due) {
+        const remaining = Math.ceil((entry.due - now) / 1000);
+        el.className = "countdown";
+        el.textContent = `⏱ ${this.format(remaining)}`;
+        el.title = `${entry.label}: broadcast in ${remaining}s`;
+      } else if (now < entry.playEnd) {
+        const remaining = Math.ceil((entry.playEnd - now) / 1000);
+        el.className = "countdown playing";
+        el.textContent = `▶ ${this.format(remaining)}`;
+        el.title = `${entry.label}: on screen for ${remaining}s more`;
+      } else {
+        el.className = "countdown playing fading";
+        el.title = `${entry.label}: finished`;
+      }
+    }
+
+    if (hidden > 0) {
+      if (!this.moreEl) {
+        this.moreEl = document.createElement("span");
+        this.moreEl.className = "countdown more";
+      }
+      this.moreEl.textContent = `+${hidden}`;
+      this.moreEl.title = `${hidden} more post${hidden === 1 ? "" : "s"} in progress`;
+    }
+
+    // Only touch the DOM order when the set of visible badges changes
+    const order = shown.map((entry) => entry.id).join(",") + (hidden > 0 ? ",+" : "");
+    if (order !== this.lastOrder) {
+      const nodes = shown.map((entry) => entry.el);
+      if (hidden > 0) nodes.push(this.moreEl);
+      container.replaceChildren(...nodes);
+      this.lastOrder = order;
+    }
+
+    if (this.entries.length === 0) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
     }
   },
 };
@@ -439,7 +663,7 @@ function clearLogs() {
 function BroadSignPlay() {
   Logger.log(
     "BroadSignPlay() called - initiating WebSocket connection",
-    "info"
+    "info",
   );
   State.isManualDisconnect = false;
   State.reconnectAttempts = 0;

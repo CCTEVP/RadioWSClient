@@ -1,171 +1,706 @@
-body {
-  font-family: Arial, sans-serif;
-  /* max-width: 800px; */
-  margin: 0 auto;
-  padding: 20px;
-  background-color: #f5f5f5;
-  height: 100vh;
+/* ==========================================================================
+   WebSocket Monitor - mobile-first layout
+   Phones: single column, sticky header, logs fill the remaining height.
+   Wide screens (>= 900px): composer on the left, logs on the right.
+   ========================================================================== */
+
+:root {
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --surface-muted: #f8f9fb;
+  --border: #dde2e8;
+  --text: #1d2430;
+  --text-muted: #667085;
+  --primary: #0b5ed7;
+  --primary-hover: #094db1;
+  --danger: #d92d20;
+  --danger-hover: #b42318;
+  --neutral: #667085;
+  --neutral-hover: #475467;
+  --disabled: #b8c0cc;
+  --radius: 12px;
+  --tap: 44px; /* minimum touch target */
+  --gap: 12px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+
+  --ok-bg: #dcfae6;
+  --ok-text: #085d3a;
+  --ok-border: #a6f4c5;
+  --warn-bg: #fef0c7;
+  --warn-text: #93370d;
+  --warn-border: #fedf89;
+  --err-bg: #fee4e2;
+  --err-text: #912018;
+  --err-border: #fecdca;
+  --play-bg: #e0edff;
+  --play-text: #0b4fb3;
+  --play-border: #b2d1ff;
+
+  --log-sent: #e8f1ff;
+  --log-received: #e7f8ee;
+  --log-error: #fdecea;
+  --log-info: #fff6e0;
+  --log-local: #f1ebff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141a;
+    --surface: #171d25;
+    --surface-muted: #1d2530;
+    --border: #2b3542;
+    --text: #e6e9ee;
+    --text-muted: #98a2b3;
+    --primary: #3b82f6;
+    --primary-hover: #2563eb;
+    --danger: #ef4444;
+    --danger-hover: #dc2626;
+    --neutral: #4b5563;
+    --neutral-hover: #374151;
+    --disabled: #3a4452;
+
+    --ok-bg: #0f2e1d;
+    --ok-text: #75e0a7;
+    --ok-border: #1f5136;
+    --warn-bg: #2f2410;
+    --warn-text: #fdb022;
+    --warn-border: #4e3b14;
+    --err-bg: #3a1513;
+    --err-text: #fda29b;
+    --err-border: #5c211d;
+    --play-bg: #12264a;
+    --play-text: #84b6ff;
+    --play-border: #1f4580;
+
+    --log-sent: #142338;
+    --log-received: #12281c;
+    --log-error: #321614;
+    --log-info: #2c2412;
+    --log-local: #231a38;
+  }
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-.container {
-  background-color: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  height: calc(100vh - 40px);
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Full-height column: header + content, using dynamic viewport units so
+   mobile browser toolbars don't cut the logs off */
+.app {
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* -------------------------------------------------------------------------
+   Header
+   ------------------------------------------------------------------------- */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 10px 16px;
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.titles {
+  min-width: 0;
 }
 
 h1 {
-  color: #333;
-  text-align: center;
-  line-height: 80%;
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-h2 {
-  color: #333;
-  text-align: center;
-  line-height: 80%;
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.status-section {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
+
+/* Status pill (app.js sets className to "status <state>") */
 .status {
-  padding: 10px;
-  margin: 10px 0;
-  border-radius: 4px;
-  font-weight: bold;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 55%;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status::before {
+  content: "";
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .status.connected {
-  background-color: #d4edda;
-  color: #155724;
-  border: 1px solid #c3e6cb;
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  border-color: var(--ok-border);
 }
 
 .status.disconnected {
-  background-color: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
+  background: var(--err-bg);
+  color: var(--err-text);
+  border-color: var(--err-border);
 }
 
 .status.connecting {
-  background-color: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffeaa7;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-color: var(--warn-border);
 }
 
+.status.connecting::before {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Layout
+   ------------------------------------------------------------------------- */
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--gap);
+  padding-left: max(var(--gap), env(safe-area-inset-left));
+  padding-right: max(var(--gap), env(safe-area-inset-right));
+  padding-bottom: max(var(--gap), env(safe-area-inset-bottom));
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap);
+}
+
+.panel-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  flex-shrink: 0;
+}
+
+.panel-logs {
+  flex: 1;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* -------------------------------------------------------------------------
+   Buttons
+   ------------------------------------------------------------------------- */
 .controls {
-  margin: 20px 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
 }
 
 button {
-  background-color: #007bff;
-  color: white;
+  min-height: var(--tap);
+  padding: 10px 14px;
   border: none;
-  padding: 10px 20px;
-  margin: 5px;
-  border-radius: 4px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 14px;
+  touch-action: manipulation;
+  transition: background-color 0.15s ease, transform 0.05s ease;
 }
 
 button:hover:not(:disabled) {
-  background-color: #0056b3;
+  background: var(--primary-hover);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  outline-offset: 2px;
 }
 
 button:disabled {
-  background-color: #6c757d;
+  background: var(--disabled);
   cursor: not-allowed;
 }
 
 button.disconnect {
-  background-color: #dc3545;
+  background: var(--danger);
 }
 
 button.disconnect:hover:not(:disabled) {
-  background-color: #c82333;
+  background: var(--danger-hover);
 }
 
-.message-section {
-  margin: 20px 0;
+button.disconnect:disabled,
+button.clear-logs:disabled {
+  background: var(--disabled);
+}
+
+button.clear-logs {
+  background: var(--neutral);
+}
+
+button.clear-logs:hover:not(:disabled) {
+  background: var(--neutral-hover);
+}
+
+/* -------------------------------------------------------------------------
+   Composer
+   ------------------------------------------------------------------------- */
+.composer {
+  border-top: 1px solid var(--border);
+  padding-top: var(--gap);
+}
+
+.composer summary {
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.composer summary::-webkit-details-marker {
+  display: none;
+}
+
+.composer summary::after {
+  content: "▾";
+  margin-left: auto; /* arrow stays at the far right */
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+/* Title stays on one line; only the badges wrap */
+.composer-title {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* One countdown badge per pending delayed post, soonest first */
+.countdowns {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.countdowns:empty {
+  display: none;
+}
+
+.countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none; /* taps still toggle the composer */
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s ease,
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease;
+}
+
+/* Narrow screens: badges get their own full-width row under the title
+   instead of a tall single column beside it */
+@media (max-width: 480px) {
+  .composer summary {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 6px 0;
+  }
+
+  .composer summary::after {
+    order: 2;
+  }
+
+  .countdowns {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+.countdown.more {
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+/* Second phase: the content is on screen for its duration */
+.countdown.playing {
+  border-color: var(--play-border);
+  background: var(--play-bg);
+  color: var(--play-text);
+}
+
+/* Duration finished: fade out (the badge is removed afterwards) */
+.countdown.fading {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+.composer:not([open]) summary::after {
+  transform: rotate(-90deg);
+}
+
+/* Posting token (password field) above the message box */
+.token-field {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
 }
 
-.message-section:last-child {
-  flex-grow: 1;
-  min-height: 0;
+.token-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.token-field input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.token-field input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+@supports (-webkit-touch-callout: none) {
+  .token-field input {
+    font-size: 16px;
+  }
 }
 
 textarea {
+  display: block;
   width: 100%;
-  height: 120px;
+  min-height: 9.5em;
+  margin-top: 8px;
   padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-family: "Courier New", monospace;
-  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-family: var(--mono);
+  /* Small enough that the sample's longest line (~38 chars) fits a 320px
+     phone without sideways scrolling */
+  font-size: 13px;
+  line-height: 1.4;
   resize: vertical;
-  flex-shrink: 0;
+  tab-size: 2;
+  white-space: pre;
+  overflow-x: auto;
+  /* Height follows the content (set by a small script); cap it so the logs
+     always keep room */
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
+/* iPhone/iPad Safari zooms into inputs smaller than 16px on focus; keep it
+   readable there without the zoom jump */
+@supports (-webkit-touch-callout: none) {
+  textarea {
+    font-size: 16px;
+  }
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap);
+  margin-top: 10px;
+}
+
+#sendBtn {
+  flex: 1;
+}
+
+/* The keyboard shortcut only matters with a physical keyboard */
+.hint {
+  display: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hint {
+    display: inline;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Logs
+   ------------------------------------------------------------------------- */
 .logs {
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-  padding: 15px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  font-family: "Courier New", monospace;
-  font-size: 12px;
-  flex-grow: 1;
-  min-height: 200px;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.logs:empty::before {
+  content: "No messages yet. Connect to start monitoring.";
+  display: block;
+  padding: 16px 8px;
+  color: var(--text-muted);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 0.9rem;
+  text-align: center;
 }
 
 .log-entry {
-  margin: 5px 0;
-  padding: 5px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
   border-left: 3px solid transparent;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  border-radius: 6px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.log-entry:last-child {
+  margin-bottom: 0;
 }
 
 .log-entry.sent {
-  border-left-color: #007bff;
-  background-color: #e7f3ff;
+  border-left-color: var(--primary);
+  background: var(--log-sent);
 }
 
 .log-entry.received {
-  border-left-color: #28a745;
-  background-color: #e8f5e8;
+  border-left-color: #12b76a;
+  background: var(--log-received);
 }
 
 .log-entry.error {
-  border-left-color: #dc3545;
-  background-color: #ffeaea;
+  border-left-color: var(--danger);
+  background: var(--log-error);
 }
 
 .log-entry.info {
-  border-left-color: #ffc107;
-  background-color: #fff8e1;
+  border-left-color: #f79009;
+  background: var(--log-info);
+}
+
+.log-entry.local-received {
+  border-left-color: #7a5af8;
+  background: var(--log-local);
 }
 
 .timestamp {
-  color: #6c757d;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: 0.85em;
 }
 
-.clear-logs {
-  background-color: #6c757d;
+/* -------------------------------------------------------------------------
+   Utilities
+   ------------------------------------------------------------------------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.clear-logs:hover:not(:disabled) {
-  background-color: #545b62;
+/* -------------------------------------------------------------------------
+   Small phones: keep three buttons on one row but tighter
+   ------------------------------------------------------------------------- */
+@media (max-width: 360px) {
+  button {
+    padding: 10px 8px;
+    font-size: 0.85rem;
+  }
+
+  .subtitle {
+    display: none;
+  }
+
+  /* Give the message box every pixel so the sample fits without scrolling */
+  .layout {
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+
+  .panel {
+    padding: 10px;
+  }
+
+  textarea {
+    padding: 8px;
+    font-size: 12px;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Phones in landscape / short screens: let the page scroll instead of
+   squeezing the logs to nothing
+   ------------------------------------------------------------------------- */
+@media (max-height: 560px) and (max-width: 899px) {
+  .app {
+    height: auto;
+  }
+
+  .panel-logs {
+    min-height: 70vh;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   Wide screens: two columns
+   ------------------------------------------------------------------------- */
+@media (min-width: 900px) {
+  body {
+    font-size: 15px;
+  }
+
+  .app-header {
+    padding: 14px 24px;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+  }
+
+  .subtitle {
+    font-size: 0.85rem;
+  }
+
+  .status {
+    font-size: 0.85rem;
+  }
+
+  .layout {
+    flex-direction: row;
+    align-items: stretch;
+    padding: 20px 24px;
+    gap: 20px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .panel-controls {
+    width: min(420px, 38%);
+    overflow-y: auto;
+  }
+
+  .panel-logs {
+    min-height: 0;
+  }
+
+  textarea {
+    max-height: none;
+  }
 }

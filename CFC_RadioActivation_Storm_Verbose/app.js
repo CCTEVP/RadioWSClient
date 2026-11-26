@@ -10,7 +10,7 @@
 const CONFIG = {
   WS_URL_BASE:
     "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/room/radio",
+  //WS_URL_BASE: "ws://localhost:8080/rooms/radio",
   AUTH_TOKEN:
     "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
   get WS_URL() {
@@ -24,11 +24,9 @@ const CONFIG = {
   CUSTOM_POP_OFFSET: 3000, // Send POP 3000ms before slot ends
   LOGGER_VISIBLE_DURATION: 5000, // ms
   LOGGER_FADE_DURATION: 1000, // ms
-  NOW_PLAYING_DURATION: 10000, // ms
   NOW_PLAYING_FADE_DURATION: 500, // ms
 
   // Image switching (from playerStorm)
-  ACTIVE_DISPLAY_DURATION: 10000, // 10 seconds
   STANDBY_IMAGE: "./img/image_01.jpg",
   ACTIVE_IMAGE: "./img/image_02.jpg",
 };
@@ -205,6 +203,14 @@ const Logger = {
 // 5. UI CONTROLLERS
 // ============================================================================
 
+/**
+ * How long to show content, in ms: its data.content.duration (seconds). The
+ * server only accepts posts with a valid duration.
+ */
+function contentDisplayMs(contentDuration) {
+  return Number(contentDuration) * 1000;
+}
+
 const UIController = {
   // Status Dots
   dots: {
@@ -305,7 +311,10 @@ const UIController = {
         container.style.display = "block";
         container.classList.remove("fade-out");
 
-        // Schedule fade-out after configured duration
+        // Stay visible for the content's duration
+        const visibleMs = contentDisplayMs(contentDuration);
+
+        // Schedule fade-out after that duration
         State.nowPlayingTimeout = setTimeout(() => {
           State.nowPlayingTimeout = null;
           container.classList.add("fade-out");
@@ -318,8 +327,9 @@ const UIController = {
             container.style.display = "none";
             State.nowPlayingHideTimeout = null;
           }, CONFIG.NOW_PLAYING_FADE_DURATION);
-        }, CONFIG.NOW_PLAYING_DURATION);
+        }, visibleMs);
 
+        Logger.log(`[UI] Now Playing visible for ${visibleMs / 1000}s`);
         if (hadExistingTimeout) {
           Logger.log("[UI] Now Playing timer restarted due to new message");
         }
@@ -370,7 +380,7 @@ const UIController = {
 
   // Image Switcher (from playerStorm)
   images: {
-    showActiveImage() {
+    showActiveImage(contentDuration) {
       if (!State.displayImage) return;
 
       // Clear any existing timer
@@ -387,10 +397,13 @@ const UIController = {
         Logger.log("[IMAGE] Active image timer restarted due to new message");
       }
 
-      // Schedule return to standby after configured duration
+      // Return to standby after the content's duration, so the active image
+      // and Now Playing end together
+      const activeMs = contentDisplayMs(contentDuration);
       State.imageResetTimer = setTimeout(() => {
         this.showStandbyImage();
-      }, CONFIG.ACTIVE_DISPLAY_DURATION);
+      }, activeMs);
+      Logger.log(`[IMAGE] Active image shown for ${activeMs / 1000}s`);
     },
 
     showStandbyImage() {
@@ -593,6 +606,20 @@ const WebSocketController = {
 
 const LocalWebSocketController = {
   /**
+   * True when running inside a BroadSign player (it injects BroadSignObject),
+   * or when forced with ?customPop=1 in the page URL
+   */
+  shouldSendCustomPOP() {
+    const forced =
+      new URLSearchParams(window.location.search).get("customPop") === "1";
+    return (
+      forced ||
+      (typeof window.BroadSignObject === "object" &&
+        window.BroadSignObject !== null)
+    );
+  },
+
+  /**
    * Starts timer to send custom POP before slot ends
    */
   startCustomPopTimer() {
@@ -650,6 +677,16 @@ const LocalWebSocketController = {
    * Sends custom POP to local WebSocket
    */
   sendCustomPOP() {
+    // The custom POP goes to the BroadSign player's local control port, which
+    // only exists inside BroadSign; elsewhere the connection is refused.
+    // Force it with ?customPop=1 (e.g. with a local stand-in on that port).
+    if (!this.shouldSendCustomPOP()) {
+      Logger.log(
+        "[LocalWS] Not running inside BroadSign (no BroadSignObject); custom POP skipped. Add ?customPop=1 to the URL to force it."
+      );
+      return;
+    }
+
     const payload = this.buildPayload();
     Logger.log("[LocalWS] Preparing to send custom_pop payload:", payload);
 
@@ -816,7 +853,7 @@ const MessageHandler = {
     Logger.log(
       `[WS] Highlighting square for advertiser ID (post): ${advertiserIdValue}`
     );
-    UIController.images.showActiveImage(); // From playerStorm
+    UIController.images.showActiveImage(State.contentDuration); // From playerStorm
     UIController.squares.highlight(advertiserIdValue);
     UIController.nowPlaying.update(
       State.contentId,

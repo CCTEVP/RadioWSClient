@@ -2,68 +2,97 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Opened as ".../agent" (no trailing slash)? Reload as ".../agent/" so
+      // the relative ./styles.css and ./app.js resolve inside this folder.
+      if (!/(\/|\.html?)$/i.test(location.pathname) && location.protocol !== "file:") {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b5ed7" />
     <title>Radio Agent - WebSocket Bridge</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="container">
-      <h1>Radio Agent - WebSocket Bridge</h1>
-      <p class="description">
-        This agent listens to the remote WebSocket server and forwards radio
-        content commands to the local WebSocket (port 2326) when any payload is
-        received.
-      </p>
+    <div class="app">
+      <header class="app-header">
+        <div class="titles">
+          <h1>Radio Agent</h1>
+          <p class="subtitle">Radio room → BroadSign bridge</p>
+        </div>
+        <div class="pills">
+          <div id="status" class="status disconnected" role="status" aria-live="polite">
+            Remote: offline
+          </div>
+          <div id="localStatus" class="status idle" role="status" aria-live="polite">
+            BroadSign: idle
+          </div>
+        </div>
+      </header>
 
-      <div id="status" class="status disconnected">Disconnected</div>
+      <main class="layout">
+        <section class="panel panel-controls" aria-label="Bridge controls">
+          <div class="controls controls-4">
+            <button id="connectBtn" type="button" onclick="connect()">Connect</button>
+            <button
+              id="disconnectBtn"
+              type="button"
+              class="disconnect"
+              onclick="disconnect()"
+              disabled
+            >
+              Disconnect
+            </button>
+            <button
+              id="testBtn"
+              type="button"
+              class="test"
+              onclick="testTrigger()"
+              title="Send play_now to BroadSign without waiting for a post"
+            >
+              Test
+            </button>
+            <button type="button" class="clear-logs" onclick="clearLogs()">
+              Clear logs
+            </button>
+          </div>
 
-      <div class="controls" aria-label="Connection Controls">
-        <button
-          id="connectBtn"
-          aria-label="Connect to Remote"
-          onclick="connect()"
-        >
-          <span class="full-label">Connect</span>
-          <span class="icon-label" aria-hidden="true">🔌</span>
-        </button>
-        <button
-          id="disconnectBtn"
-          aria-label="Disconnect"
-          onclick="disconnect()"
-          disabled
-        >
-          <span class="full-label">Disconnect</span>
-          <span class="icon-label" aria-hidden="true">⛔</span>
-        </button>
-        <button
-          class="clear-logs"
-          aria-label="Clear Logs"
-          onclick="clearLogs()"
-        >
-          <span class="full-label">Clear</span>
-          <span class="icon-label" aria-hidden="true">🧹</span>
-        </button>
-      </div>
+          <div class="stats" aria-label="Bridge statistics">
+            <div class="stat">
+              <span id="statPosts" class="stat-value">0</span>
+              <span class="stat-label">Posts received</span>
+            </div>
+            <div class="stat">
+              <span id="statSent" class="stat-value">0</span>
+              <span class="stat-label">Sent</span>
+            </div>
+            <div class="stat">
+              <span id="statFailed" class="stat-value">0</span>
+              <span class="stat-label">Failed</span>
+            </div>
+          </div>
 
-      <div class="payload-info">
-        <h3>Payload sent to local WebSocket (port 2326):</h3>
-        <pre id="payloadDisplay">
-        {
-          "rc": {
-            "version": "1",
-            "id": "1",
-            "action": "play_now",
-            "name": "RadioContent",
-            "max-duration": "10"
-          }
-        }
-        </pre>
-      </div>
+          <p id="lastTrigger" class="last-trigger">No trigger yet.</p>
 
-      <div class="message-section">
-        <h3>Agent Logs</h3>
-        <div id="logs" class="logs"></div>
-      </div>
+          <details class="composer">
+            <summary>
+              <span class="composer-title">Last payload to BroadSign</span>
+            </summary>
+            <pre id="payloadDisplay" class="payload">(nothing sent yet)</pre>
+          </details>
+
+          <p id="serverNote" class="server-note"></p>
+        </section>
+
+        <section class="panel panel-logs" aria-labelledby="logsTitle">
+          <h2 id="logsTitle" class="panel-title">Agent logs</h2>
+          <div id="logs" class="logs" role="log" aria-live="polite"></div>
+        </section>
+      </main>
     </div>
 
     <script src="./app.js"></script>

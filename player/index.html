@@ -2,6 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Opened as ".../player" (no trailing slash)? Reload as ".../player/" so
+      // the relative ./styles.css and ./app.js resolve inside this folder.
+      if (!/(\/|\.html?)$/i.test(location.pathname) && location.protocol !== "file:") {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Radio Content</title>
     <link rel="stylesheet" href="./styles.css" />
