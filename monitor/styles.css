@@ -432,43 +432,6 @@ button.clear-logs:hover:not(:disabled) {
   transform: rotate(-90deg);
 }
 
-/* Posting token (password field) above the message box */
-.token-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-}
-
-.token-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.token-field input {
-  width: 100%;
-  min-height: var(--tap);
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-muted);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 13px;
-}
-
-.token-field input:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
-  outline-offset: 2px;
-}
-
-@supports (-webkit-touch-callout: none) {
-  .token-field input {
-    font-size: 16px;
-  }
-}
-
 textarea {
   display: block;
   width: 100%;

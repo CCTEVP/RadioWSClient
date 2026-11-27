@@ -7,27 +7,46 @@
 // 1. CONFIGURATION & CONSTANTS
 // ============================================================================
 
+const SERVERS = {
+  prod: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  local: "ws://localhost:8080/rooms/radio",
+};
+
+// Pick the server with ?server=local|prod (default local)
+const SERVER = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const name = Object.hasOwn(SERVERS, params.get("server") ?? "") ? params.get("server") : "local";
+  return { name, url: SERVERS[name] };
+})();
+
 const CONFIG = {
-  //WS_URL_BASE: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  WS_URL_BASE: "ws://localhost:8080/rooms/radio",
-  AUTH_TOKEN:
-    "eyJjbGllbnRJZCI6Im1vbml0b3IiLCJyb29tIjoicmFkaW8iLCJleHBpcmVzQXQiOjQ5MTQxMjE1NjY0NjQsIm1ldGFkYXRhIjp7InJvbGUiOiJtb25pdG9yIiwidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.5f5owqdr4j3gRD0UtiZLTYI_Du4Sa9XtRNN84B0fat4",
+  WS_URL_BASE: SERVER.url,
+  // One token per server (tokens only work on the server that minted them),
+  // role "control". Written by RadioWSServer/scripts/mint-client-tokens.js.
+  AUTH_TOKENS: {
+    local: "eyJjbGllbnRJZCI6Im1vbml0b3IiLCJyb29tIjoicmFkaW8iLCJleHBpcmVzQXQiOjE4MjczMDI4NzQ2MDEsIm1ldGFkYXRhIjp7InJvbGUiOiJjb250cm9sIn0sImlzc3VlZEF0IjoxNzk1NzY2ODc0NjAxfQ.I8OAGXCgiOsaST-6Izq7ucPdBtbmX01mhxpDMVK_CbE",
+    prod: "",
+  },
+  get AUTH_TOKEN() {
+    return this.AUTH_TOKENS[SERVER.name] || "";
+  },
   get WS_URL() {
     return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
   },
   // Posts go over HTTP to the same room ("ws://host/rooms/radio" ->
-  // "http://host/rooms/radio/post"). The built-in AUTH_TOKEN above is
-  // published, so it can only receive; posting needs a token minted with a
-  // posting role (advertiser, control, automation or admin), entered in the UI.
+  // "http://host/rooms/radio/post") with the same token: its role (control)
+  // may post.
   get POST_URL() {
     return `${this.WS_URL_BASE.replace(/^ws/, "http")}/post`;
   },
-  POST_TOKEN_STORAGE_KEY: "radioMonitor.postToken",
   HEARTBEAT_INTERVAL: 30000, // 30 seconds
   RECONNECT_DELAY: 3000, // 3 seconds (grows to 15s over the first attempts)
   MAX_RECONNECT_ATTEMPTS: 20, // Fast retries (~4.5 minutes total)
   SLOW_RECONNECT_DELAY: 60000, // After fast retries, keep trying every 60s
 };
+
+// Shown when this app has no token for the selected server
+const MISSING_TOKEN_MESSAGE = `No token for the "${SERVER.name}" server in CONFIG.AUTH_TOKENS: run RadioWSServer/scripts/mint-client-tokens.js --target ${SERVER.name}`;
 
 // ============================================================================
 // 2. STATE MANAGEMENT
@@ -49,7 +68,6 @@ const State = {
   messageInput: null,
   logsEl: null,
   countdownEl: null,
-  postTokenInput: null,
 };
 
 // ============================================================================
@@ -67,19 +85,12 @@ function initializeDOMElements() {
   State.messageInput = document.getElementById("messageInput");
   State.logsEl = document.getElementById("logs");
   State.countdownEl = document.getElementById("delayCountdowns");
-  State.postTokenInput = document.getElementById("postToken");
 }
 
 /**
  * Setup event listeners
  */
 function setupEventListeners() {
-  // Remember the posting token for this browser session
-  if (State.postTokenInput) {
-    PostToken.restore();
-    State.postTokenInput.addEventListener("input", () => PostToken.save());
-  }
-
   // Handle Ctrl+Enter in textarea to send message
   if (State.messageInput) {
     State.messageInput.addEventListener("keydown", (event) => {
@@ -180,8 +191,13 @@ const WebSocketController = {
       return;
     }
 
+    if (!CONFIG.AUTH_TOKEN) {
+      UIController.updateStatus("disconnected", "No token");
+      Logger.log(MISSING_TOKEN_MESSAGE, "error");
+      return;
+    }
     UIController.updateStatus("connecting", "Connecting...");
-    Logger.log(`Connecting to ${CONFIG.WS_URL}...`, "info");
+    Logger.log(`Connecting to ${CONFIG.WS_URL_BASE}...`, "info");
 
     try {
       State.ws = new WebSocket(CONFIG.WS_URL);
@@ -320,13 +336,8 @@ const WebSocketController = {
       return false;
     }
 
-    const postToken = PostToken.get();
-    if (!postToken) {
-      Logger.log(
-        "Posting token required: paste a token minted with role advertiser, control, automation or admin into \"Posting token\".",
-        "error"
-      );
-      State.postTokenInput?.focus();
+    if (!CONFIG.AUTH_TOKEN) {
+      Logger.log(MISSING_TOKEN_MESSAGE, "error");
       return false;
     }
 
@@ -335,7 +346,7 @@ const WebSocketController = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${postToken}`,
+          Authorization: `Bearer ${CONFIG.AUTH_TOKEN}`,
         },
         body: trimmedMessage,
       });
@@ -451,37 +462,6 @@ const WebSocketController = {
       setTimeout(() => {
         State.isManualDisconnect = false;
       }, 1000);
-    }
-  },
-};
-
-// ============================================================================
-// 6a. POSTING TOKEN
-// Kept for this browser session only (sessionStorage), never in the code.
-// ============================================================================
-
-const PostToken = {
-  get() {
-    return (State.postTokenInput?.value || "").trim();
-  },
-
-  restore() {
-    if (!State.postTokenInput) return;
-    try {
-      State.postTokenInput.value =
-        sessionStorage.getItem(CONFIG.POST_TOKEN_STORAGE_KEY) || "";
-    } catch (_) {
-      /* storage unavailable: start empty */
-    }
-  },
-
-  save() {
-    try {
-      const token = this.get();
-      if (token) sessionStorage.setItem(CONFIG.POST_TOKEN_STORAGE_KEY, token);
-      else sessionStorage.removeItem(CONFIG.POST_TOKEN_STORAGE_KEY);
-    } catch (_) {
-      /* storage unavailable: token just isn't remembered */
     }
   },
 };

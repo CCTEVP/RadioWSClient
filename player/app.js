@@ -7,11 +7,29 @@
 // 1. CONFIGURATION & CONSTANTS
 // ============================================================================
 
+const SERVERS = {
+  prod: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  local: "ws://localhost:8080/rooms/radio",
+};
+
+// Pick the server with ?server=local|prod (default local)
+const SERVER = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const name = Object.hasOwn(SERVERS, params.get("server") ?? "") ? params.get("server") : "local";
+  return { name, url: SERVERS[name] };
+})();
+
 const CONFIG = {
-  //WS_URL_BASE: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  WS_URL_BASE: "ws://localhost:8080/rooms/radio",
-  AUTH_TOKEN:
-    "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
+  WS_URL_BASE: SERVER.url,
+  // One token per server (tokens only work on the server that minted them),
+  // role "screen". Written by RadioWSServer/scripts/mint-client-tokens.js.
+  AUTH_TOKENS: {
+    local: "eyJjbGllbnRJZCI6InBsYXllciIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6MTgyNzMwMjg3NDYxMywibWV0YWRhdGEiOnsicm9sZSI6InNjcmVlbiJ9LCJpc3N1ZWRBdCI6MTc5NTc2Njg3NDYxM30.OlrSfUU_2r13qBFXKlsItk1YolsBGq43GRk9m1DKCEU",
+    prod: "",
+  },
+  get AUTH_TOKEN() {
+    return this.AUTH_TOKENS[SERVER.name] || "";
+  },
   get WS_URL() {
     return buildWebSocketUrl();
   },
@@ -26,6 +44,9 @@ const CONFIG = {
   LOGGER_MAX_LINES: 500, // cap on-screen log lines so long-running players don't grow unbounded
   NOW_PLAYING_FADE_DURATION: 500, // ms
 };
+
+// Shown when this app has no token for the selected server
+const MISSING_TOKEN_MESSAGE = `No token for the "${SERVER.name}" server in CONFIG.AUTH_TOKENS: run RadioWSServer/scripts/mint-client-tokens.js --target ${SERVER.name}`;
 
 // ============================================================================
 // 2. STATE MANAGEMENT
@@ -460,9 +481,14 @@ const WebSocketController = {
       return;
     }
 
+    if (!CONFIG.AUTH_TOKEN) {
+      Logger.log(`[WS] ${MISSING_TOKEN_MESSAGE}`);
+      return;
+    }
+
     try {
       const wsUrl = buildWebSocketUrl();
-      Logger.log("[WS] Connecting to", wsUrl);
+      Logger.log("[WS] Connecting to", CONFIG.WS_URL_BASE);
       State.ws = new WebSocket(wsUrl);
 
       State.ws.onopen = () => {

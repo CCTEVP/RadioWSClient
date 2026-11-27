@@ -14,17 +14,26 @@ const SERVERS = {
   local: "ws://localhost:8080/rooms/radio",
 };
 
+// Pick the server with ?server=local|prod (default prod). Any other URL can
+// be given with ?ws=wss://...; it uses the token of ?server (default prod).
+const SERVER = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const name = Object.hasOwn(SERVERS, params.get("server") ?? "") ? params.get("server") : "prod";
+  const custom = params.get("ws");
+  return { name, url: custom && /^wss?:\/\//i.test(custom) ? custom : SERVERS[name] };
+})();
+
 const CONFIG = {
-  // Pick the server with ?server=local|prod, or any URL with ?ws=wss://...
-  // (defaults to prod)
-  WS_URL_BASE: (() => {
-    const params = new URLSearchParams(window.location.search);
-    const custom = params.get("ws");
-    if (custom && /^wss?:\/\//i.test(custom)) return custom;
-    return SERVERS[params.get("server")] || SERVERS.prod;
-  })(),
-  AUTH_TOKEN:
-    "eyJjbGllbnRJZCI6ImNvbnRyb2wiLCJyb29tIjoicmFkaW8iLCJleHBpcmVzQXQiOjQ5MTQxMjE1NjY0NjQsIm1ldGFkYXRhIjp7InJvbGUiOiJjb250cm9sIiwidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.P3mH8nRwT6jKbVxZ9sLq2YdF5aGtC4wJoX1yNiE7uMp",
+  WS_URL_BASE: SERVER.url,
+  // One token per server (tokens only work on the server that minted them),
+  // role "agent". Written by RadioWSServer/scripts/mint-client-tokens.js.
+  AUTH_TOKENS: {
+    local: "eyJjbGllbnRJZCI6ImFnZW50Iiwicm9vbSI6InJhZGlvIiwiZXhwaXJlc0F0IjoxODI3MzAyODc0NjE2LCJtZXRhZGF0YSI6eyJyb2xlIjoiYWdlbnQifSwiaXNzdWVkQXQiOjE3OTU3NjY4NzQ2MTZ9.S6yPMnQ2ud4Jjxxo3IcOQO4z0I_wtbsvkfNInaEQ7-o",
+    prod: "",
+  },
+  get AUTH_TOKEN() {
+    return this.AUTH_TOKENS[SERVER.name] || "";
+  },
   get WS_URL() {
     return `${this.WS_URL_BASE}?token=${this.AUTH_TOKEN}`;
   },
@@ -41,6 +50,9 @@ const CONFIG = {
   MAX_RECONNECT_ATTEMPTS: 20, // fast retries (~4.5 min), then slow ones
   SLOW_RECONNECT_DELAY: 60000,
 };
+
+// Shown when this app has no token for the selected server
+const MISSING_TOKEN_MESSAGE = `No token for the "${SERVER.name}" server in CONFIG.AUTH_TOKENS: run RadioWSServer/scripts/mint-client-tokens.js --target ${SERVER.name}`;
 
 // ============================================================================
 // 2. STATE
@@ -171,6 +183,11 @@ const Remote = {
     }
 
     State.isManualDisconnect = false;
+    if (!CONFIG.AUTH_TOKEN) {
+      UI.remoteStatus("disconnected", "no token");
+      Logger.log(MISSING_TOKEN_MESSAGE, "error");
+      return;
+    }
     UI.remoteStatus("connecting", "connecting…");
     Logger.log(`Connecting to ${CONFIG.WS_URL_BASE}…`);
 
