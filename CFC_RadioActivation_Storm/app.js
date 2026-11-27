@@ -7,12 +7,30 @@
 // 1. CONFIGURATION & CONSTANTS
 // ============================================================================
 
+const SERVERS = {
+  prod: "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
+  local: "ws://localhost:8080/rooms/radio",
+};
+
+// Pick the server with ?server=local|prod (default prod)
+const SERVER = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const name = Object.hasOwn(SERVERS, params.get("server") ?? "") ? params.get("server") : "prod";
+  return { name, url: SERVERS[name] };
+})();
+
 const CONFIG = {
-  WS_URL_BASE:
-    "wss://radiowsserver-763503917257.europe-west1.run.app/rooms/radio",
-  //WS_URL_BASE: "ws://localhost:8080/rooms/radio",
-  AUTH_TOKEN:
-    "eyJjbGllbnRJZCI6InNjcmVlbiIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6NDkxNDEyMTU2NjQ2NCwibWV0YWRhdGEiOnsidmFsaWRpdHkiOiJObyBleHBpcmF0aW9uIn0sImlzc3VlZEF0IjoxNzYwNTIxNTY2NDY0fQ.1tMYGVIeJl5zPxOclrPWHieEognJGWDaq4-vzjziNi0",
+  WS_URL_BASE: SERVER.url,
+  // One token per server (tokens only work on the server that minted them),
+  // role "screen" (the Player's token). Written by
+  // RadioWSServer/scripts/mint-client-tokens.js.
+  AUTH_TOKENS: {
+    local: "eyJjbGllbnRJZCI6InBsYXllciIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6MTgyNzMwNDY0MTg2OSwibWV0YWRhdGEiOnsicm9sZSI6InNjcmVlbiJ9LCJpc3N1ZWRBdCI6MTc5NTc2ODY0MTg2OX0.dUOSLRGBrjmqryNVNv9efBGMtm3lqjaSThORKQ_svr4",
+    prod: "",
+  },
+  get AUTH_TOKEN() {
+    return this.AUTH_TOKENS[SERVER.name] || "";
+  },
   get WS_URL() {
     return buildWebSocketUrl();
   },
@@ -24,6 +42,9 @@ const CONFIG = {
   STANDBY_IMAGE: "./img/image_01.jpg",
   ACTIVE_IMAGE: "./img/image_02.jpg",
 };
+
+// Shown when this app has no token for the selected server
+const MISSING_TOKEN_MESSAGE = `No token for the "${SERVER.name}" server in CONFIG.AUTH_TOKENS: run RadioWSServer/scripts/mint-client-tokens.js --target ${SERVER.name}`;
 
 // ============================================================================
 // 2. STATE MANAGEMENT
@@ -202,8 +223,13 @@ const WebSocketController = {
       return;
     }
 
+    if (!CONFIG.AUTH_TOKEN) {
+      console.error(MISSING_TOKEN_MESSAGE);
+      return;
+    }
+
     const wsUrl = CONFIG.WS_URL;
-    console.log(`Connecting to ${wsUrl}...`);
+    console.log(`Connecting to ${CONFIG.WS_URL_BASE}...`);
     UIController.updateStatusIndicator("connecting");
 
     try {

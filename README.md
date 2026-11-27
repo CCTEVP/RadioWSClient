@@ -20,13 +20,13 @@ wss://radiowsserver-763503917257.europe-west1.run.app/
 
 Each app keeps one token per server in `CONFIG.AUTH_TOKENS` (`local`, `prod`)
 and picks the server with `?server=local|prod` (Monitor and Player default to
-`local`, Agent to `prod`). Tokens are minted per server, with the right role,
+`local`; Agent and the Storm apps to `prod`). Tokens are minted per server, with the right role,
 by `RadioWSServer/scripts/mint-client-tokens.js`:
 
 | App | Role | Can post |
 |---|---|---|
 | Monitor | `control` | yes: it posts with its own token |
-| Player | `screen` | no |
+| Player, Storm, Storm Verbose | `screen` (one shared token) | no |
 | Agent | `agent` | no |
 
 An app without a token for the selected server says so in its log and does

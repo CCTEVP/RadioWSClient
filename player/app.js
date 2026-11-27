@@ -24,7 +24,7 @@ const CONFIG = {
   // One token per server (tokens only work on the server that minted them),
   // role "screen". Written by RadioWSServer/scripts/mint-client-tokens.js.
   AUTH_TOKENS: {
-    local: "eyJjbGllbnRJZCI6InBsYXllciIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6MTgyNzMwMjg3NDYxMywibWV0YWRhdGEiOnsicm9sZSI6InNjcmVlbiJ9LCJpc3N1ZWRBdCI6MTc5NTc2Njg3NDYxM30.OlrSfUU_2r13qBFXKlsItk1YolsBGq43GRk9m1DKCEU",
+    local: "eyJjbGllbnRJZCI6InBsYXllciIsInJvb20iOiJyYWRpbyIsImV4cGlyZXNBdCI6MTgyNzMwNDY0MTg2OSwibWV0YWRhdGEiOnsicm9sZSI6InNjcmVlbiJ9LCJpc3N1ZWRBdCI6MTc5NTc2ODY0MTg2OX0.dUOSLRGBrjmqryNVNv9efBGMtm3lqjaSThORKQ_svr4",
     prod: "",
   },
   get AUTH_TOKEN() {
